@@ -12,6 +12,10 @@ import logging
 import tempfile
 import copy
 import re
+import time
+import threading
+import queue
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from collections import defaultdict
 from tqdm import tqdm
 import ebooklib
@@ -36,7 +40,8 @@ class EPUBProcessor:
         'alt', 'title', 'aria-label', 'placeholder'
     }
     
-    def __init__(self, translator, term_extractor, batch_size=10, auto_extract_terms=True):
+    def __init__(self, translator, term_extractor, batch_size=10, auto_extract_terms=True, 
+                 max_workers=4, chunk_size=5000):
         """Initialize EPUB processor.
         
         Args:
@@ -44,16 +49,21 @@ class EPUBProcessor:
             term_extractor: TerminologyExtractor instance for terminology management
             batch_size: Number of paragraphs to translate in one batch
             auto_extract_terms: Whether to automatically extract terminology
+            max_workers: Maximum number of worker threads for parallel processing
+            chunk_size: Size of content chunks for processing (in characters)
         """
         self.translator = translator
         self.term_extractor = term_extractor
         self.batch_size = batch_size
         self.auto_extract_terms = auto_extract_terms
+        self.max_workers = max_workers
+        self.chunk_size = chunk_size
         self.translation_cache = {}
         self.total_chars = 0
         self.total_segments = 0
         self.translated_chars = 0
         self.translated_segments = 0
+        self.lock = threading.Lock()  # Lock for thread-safe operations
         
     def translate_epub(self, input_path, output_path):
         """Translate an EPUB file from input_path and save to output_path.
@@ -65,6 +75,7 @@ class EPUBProcessor:
         Returns:
             Dictionary with translation statistics
         """
+        start_time = time.time()
         logger.info(f"Loading EPUB file: {input_path}")
         book = epub.read_epub(input_path)
         
@@ -86,11 +97,34 @@ class EPUBProcessor:
             self._extract_terminology(html_items)
         
         # Translate content with progress bar
-        logger.info("Translating EPUB content")
-        with tqdm(total=len(html_items), desc="Translating chapters") as pbar:
+        logger.info(f"Translating EPUB content using {self.max_workers} parallel workers")
+        
+        # Use ThreadPoolExecutor to parallelize translation
+        with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
+            futures = {}
+            results = {}
+            
+            # Submit translation tasks
             for item in html_items:
-                self._translate_item(item, translated_book)
-                pbar.update(1)
+                future = executor.submit(self._translate_item_parallel, item)
+                futures[future] = item.get_id()
+            
+            # Monitor progress with tqdm
+            with tqdm(total=len(futures), desc="Translating chapters") as pbar:
+                for future in as_completed(futures):
+                    item_id = futures[future]
+                    try:
+                        results[item_id] = future.result()
+                        pbar.update(1)
+                    except Exception as e:
+                        logger.error(f"Error translating item {item_id}: {str(e)}")
+                        pbar.update(1)
+            
+            # Add translated items to the book
+            for item in html_items:
+                item_id = item.get_id()
+                if item_id in results and results[item_id]:
+                    translated_book.add_item(results[item_id])
         
         # Set metadata in translated book
         self._set_metadata(translated_book, metadata)
@@ -100,13 +134,23 @@ class EPUBProcessor:
         epub.write_epub(output_path, translated_book)
         
         # Return statistics
+        end_time = time.time()
+        processing_time = end_time - start_time
+        chars_per_second = self.translated_chars / processing_time if processing_time > 0 else 0
+        
         stats = {
             'total_chars': self.total_chars,
             'total_segments': self.total_segments,
             'translated_chars': self.translated_chars,
             'translated_segments': self.translated_segments,
+            'processing_time': processing_time,
+            'chars_per_second': chars_per_second
         }
-        logger.info(f"Translation complete. Statistics: {stats}")
+        
+        logger.info(f"Translation complete in {processing_time:.2f} seconds")
+        logger.info(f"Processing speed: {chars_per_second:.2f} characters per second")
+        logger.info(f"Statistics: {stats}")
+        
         return stats
     
     def _extract_metadata(self, book):
@@ -176,63 +220,106 @@ class EPUBProcessor:
         Args:
             html_items: List of ebooklib.epub.EpubHtml items
         """
-        # Extract text content from all items
+        # Extract text content from all items in parallel
         all_text = ""
-        for item in html_items:
-            content = item.get_content().decode('utf-8')
-            soup = BeautifulSoup(content, 'html.parser')
-            # Extract text, avoiding script, style, etc.
-            for tag in soup.find_all(self.SKIP_TAGS):
-                tag.extract()
-            all_text += soup.get_text() + "\n"
+        
+        with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
+            futures = []
+            
+            # Submit tasks to extract text from each item
+            for item in html_items:
+                futures.append(executor.submit(self._extract_text_from_item, item))
+            
+            # Collect results
+            for future in as_completed(futures):
+                try:
+                    item_text = future.result()
+                    all_text += item_text + "\n"
+                except Exception as e:
+                    logger.error(f"Error extracting text: {str(e)}")
         
         # Extract terminology from text
         self.term_extractor.extract_terminology(all_text)
         logger.info(f"Extracted {len(self.term_extractor.terminology)} terminology items")
     
-    def _translate_item(self, item, translated_book):
-        """Translate an EPUB HTML item.
+    def _extract_text_from_item(self, item):
+        """Extract text content from an EPUB HTML item.
+        
+        Args:
+            item: ebooklib.epub.EpubHtml item
+        
+        Returns:
+            Extracted text content
+        """
+        content = item.get_content().decode('utf-8')
+        soup = BeautifulSoup(content, 'html.parser')
+        
+        # Extract text, avoiding script, style, etc.
+        for tag in soup.find_all(self.SKIP_TAGS):
+            tag.extract()
+        
+        return soup.get_text()
+    
+    def _translate_item_parallel(self, item):
+        """Translate an EPUB HTML item in parallel.
         
         Args:
             item: ebooklib.epub.EpubHtml item to translate
-            translated_book: Book to add translated item to
+        
+        Returns:
+            Translated EpubHtml item
         """
         item_id = item.get_id()
         logger.debug(f"Translating item: {item_id}")
         
-        # Get content and create BeautifulSoup object
-        content = item.get_content().decode('utf-8')
-        soup = BeautifulSoup(content, 'html.parser')
+        try:
+            # Get content and create BeautifulSoup object
+            content = item.get_content().decode('utf-8')
+            soup = BeautifulSoup(content, 'html.parser')
+            
+            # Find all text nodes that need translation
+            translatable_segments = self._extract_translatable_segments(soup)
+            
+            # Group segments into batches for efficient translation
+            batches = [
+                translatable_segments[i:i + self.batch_size]
+                for i in range(0, len(translatable_segments), self.batch_size)
+            ]
+            
+            # Process batches in parallel for large documents
+            if len(batches) > 5:
+                with ThreadPoolExecutor(max_workers=min(self.max_workers, len(batches))) as executor:
+                    futures = [executor.submit(self._translate_batch, batch) for batch in batches]
+                    
+                    for future in as_completed(futures):
+                        try:
+                            future.result()
+                        except Exception as e:
+                            logger.error(f"Error in batch translation: {str(e)}")
+            else:
+                # For small documents, process sequentially
+                for batch in batches:
+                    self._translate_batch(batch)
+            
+            # Update the content with translated text
+            translated_content = str(soup)
+            
+            # Create a new item for the translated book
+            translated_item = epub.EpubHtml(
+                uid=item.get_id(),
+                file_name=item.get_name(),
+                media_type="application/xhtml+xml",
+                content=translated_content.encode('utf-8')
+            )
+            
+            # Copy properties
+            translated_item.properties = item.properties
+            
+            return translated_item
         
-        # Find all text nodes that need translation
-        translatable_segments = self._extract_translatable_segments(soup)
-        
-        # Group segments into batches for efficient translation
-        batches = [
-            translatable_segments[i:i + self.batch_size]
-            for i in range(0, len(translatable_segments), self.batch_size)
-        ]
-        
-        # Translate batches with progress
-        for batch in batches:
-            self._translate_batch(batch)
-        
-        # Update the content with translated text
-        translated_content = str(soup)
-        
-        # Create a new item for the translated book
-        translated_item = epub.EpubHtml(
-            uid=item.get_id(),
-            file_name=item.get_name(),
-            media_type="application/xhtml+xml",
-            content=translated_content.encode('utf-8')
-        )
-        
-        # Copy properties
-        translated_item.properties = item.properties
-        
-        # Add to the book
-        translated_book.add_item(translated_item)
+        except Exception as e:
+            logger.error(f"Error translating item {item_id}: {str(e)}")
+            return None
     
     def _extract_translatable_segments(self, soup):
         """Extract translatable text segments from BeautifulSoup object.
@@ -264,16 +351,22 @@ class EPUBProcessor:
             
             # Add to translatable segments
             segments.append((element, None, str(element)))
-            self.total_segments += 1
-            self.total_chars += len(str(element))
+            
+            # Thread-safe increment of statistics
+            with self.lock:
+                self.total_segments += 1
+                self.total_chars += len(str(element))
         
         # Process translatable attributes
         for tag in soup.find_all():
             for attr in self.TRANSLATABLE_ATTRS:
                 if tag.has_attr(attr) and tag[attr].strip():
                     segments.append((tag, attr, tag[attr]))
-                    self.total_segments += 1
-                    self.total_chars += len(tag[attr])
+                    
+                    # Thread-safe increment of statistics
+                    with self.lock:
+                        self.total_segments += 1
+                        self.total_chars += len(tag[attr])
         
         return segments
     
@@ -290,31 +383,70 @@ class EPUBProcessor:
         if not texts:
             return
         
+        # Check cache for translations
+        translations_to_do = []
+        indices_to_translate = []
+        cached_translations = []
+        
+        for i, text in enumerate(texts):
+            cache_key = text
+            if cache_key in self.translation_cache:
+                cached_translations.append((i, self.translation_cache[cache_key]))
+            else:
+                translations_to_do.append(text)
+                indices_to_translate.append(i)
+        
         # Apply terminology protection
-        protected_texts = [
-            self.term_extractor.protect_terminology(text) for text in texts
-        ]
-        
-        # Translate texts
-        translated_texts = self.translator.translate_batch(protected_texts)
-        
-        # Restore terminology
-        translated_texts = [
-            self.term_extractor.restore_terminology(text) for text in translated_texts
-        ]
+        if translations_to_do:
+            protected_texts = [
+                self.term_extractor.protect_terminology(text) for text in translations_to_do
+            ]
+            
+            # Translate texts
+            translated_texts = self.translator.translate_batch(protected_texts)
+            
+            # Restore terminology
+            translated_texts = [
+                self.term_extractor.restore_terminology(text) for text in translated_texts
+            ]
+            
+            # Cache translations
+            for i, text in enumerate(translations_to_do):
+                if i < len(translated_texts):
+                    self.translation_cache[text] = translated_texts[i]
+        else:
+            translated_texts = []
         
         # Update segments with translations
-        for i, (element, attribute, original_text) in enumerate(segments):
-            if i < len(translated_texts):
-                translated_text = translated_texts[i]
-                
-                # Update the element
-                if attribute is None:
-                    # Text node
-                    element.replace_with(translated_text)
-                else:
-                    # Attribute
-                    element[attribute] = translated_text
-                
-                self.translated_segments += 1
-                self.translated_chars += len(translated_text)
+        # First, handle cached translations
+        for idx, translation in cached_translations:
+            if idx < len(segments):
+                element, attribute, original_text = segments[idx]
+                self._update_segment(element, attribute, translation)
+        
+        # Then, handle new translations
+        for i, orig_idx in enumerate(indices_to_translate):
+            if i < len(translated_texts) and orig_idx < len(segments):
+                element, attribute, original_text = segments[orig_idx]
+                self._update_segment(element, attribute, translated_texts[i])
+    
+    def _update_segment(self, element, attribute, translated_text):
+        """Update a segment with translated text.
+        
+        Args:
+            element: BeautifulSoup element
+            attribute: Attribute name or None for text content
+            translated_text: Translated text
+        """
+        # Update the element
+        if attribute is None:
+            # Text node
+            element.replace_with(translated_text)
+        else:
+            # Attribute
+            element[attribute] = translated_text
+        
+        # Thread-safe increment of statistics
+        with self.lock:
+            self.translated_segments += 1
+            self.translated_chars += len(translated_text)

@@ -2,9 +2,4 @@ ebooklib>=0.17.1
 beautifulsoup4>=4.9.3
 requests>=2.25.1
 tqdm>=4.62.3
-nltk>=3.6.7
-python-i18n>=0.3.9
-opencc>=1.1.4
-# deepseek-api not available, using our custom implementation instead
-spacy>=3.1.0
-emoji>=1.7.0
+# Removed complex ML dependencies for testing

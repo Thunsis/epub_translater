@@ -4,6 +4,7 @@
 """
 Terminology Extractor for EPUB Translator.
 Identifies domain-specific terminology and protects it during translation.
+Simple implementation without external NLP dependencies.
 """
 
 import os
@@ -12,12 +13,40 @@ import csv
 import logging
 import string
 import collections
-from nltk.tokenize import word_tokenize, sent_tokenize
-from nltk.util import ngrams
-from nltk.corpus import stopwords
-import nltk
 
 logger = logging.getLogger("epub_translator.term_extractor")
+
+# Simple stopwords list (most common English words)
+STOPWORDS = {
+    'i', 'me', 'my', 'myself', 'we', 'our', 'ours', 'ourselves', 'you', 'your', 
+    'yours', 'yourself', 'yourselves', 'he', 'him', 'his', 'himself', 'she', 
+    'her', 'hers', 'herself', 'it', 'its', 'itself', 'they', 'them', 'their', 
+    'theirs', 'themselves', 'what', 'which', 'who', 'whom', 'this', 'that', 
+    'these', 'those', 'am', 'is', 'are', 'was', 'were', 'be', 'been', 'being', 
+    'have', 'has', 'had', 'having', 'do', 'does', 'did', 'doing', 'a', 'an', 
+    'the', 'and', 'but', 'if', 'or', 'because', 'as', 'until', 'while', 'of', 
+    'at', 'by', 'for', 'with', 'about', 'against', 'between', 'into', 'through', 
+    'during', 'before', 'after', 'above', 'below', 'to', 'from', 'up', 'down', 
+    'in', 'out', 'on', 'off', 'over', 'under', 'again', 'further', 'then', 
+    'once', 'here', 'there', 'when', 'where', 'why', 'how', 'all', 'any', 
+    'both', 'each', 'few', 'more', 'most', 'other', 'some', 'such', 'no', 
+    'nor', 'not', 'only', 'own', 'same', 'so', 'than', 'too', 'very'
+}
+
+def simple_sentence_tokenize(text):
+    """Simple sentence tokenizer using regex."""
+    # Split on sentence-ending punctuation followed by whitespace or end of string
+    sentences = re.split(r'[.!?](?:\s|\Z)', text)
+    return [s.strip() for s in sentences if s.strip()]
+
+def simple_word_tokenize(text):
+    """Simple word tokenizer using regex."""
+    # Find all words (sequences of letters, numbers, and some punctuation)
+    return re.findall(r'\b[\w\-\']+\b', text)
+
+def generate_ngrams(tokens, n):
+    """Generate n-grams from a list of tokens."""
+    return [' '.join(tokens[i:i+n]) for i in range(len(tokens)-n+1)]
 
 class TerminologyExtractor:
     """Extracts and manages domain-specific terminology."""
@@ -26,7 +55,8 @@ class TerminologyExtractor:
     PROTECT_START = "[[TERM:"
     PROTECT_END = "]]"
     
-    def __init__(self, min_frequency=3, max_term_length=5, ignore_case=True, custom_terminology_file=None):
+    def __init__(self, min_frequency=3, max_term_length=5, ignore_case=True, custom_terminology_file=None, 
+                 use_deepseek=True, translator=None):
         """Initialize terminology extractor.
         
         Args:
@@ -34,62 +64,60 @@ class TerminologyExtractor:
             max_term_length: Maximum number of words in a term
             ignore_case: Whether to ignore case when matching terms
             custom_terminology_file: Path to CSV file with custom terminology
+            use_deepseek: Whether to use Deepseek for terminology extraction
+            translator: Translator instance for terminology translation
         """
         self.min_frequency = min_frequency
         self.max_term_length = max_term_length
         self.ignore_case = ignore_case
         self.terminology = {}  # {term: frequency}
         self.custom_terminology = {}  # {term: translation}
-        
-        # Download NLTK resources if not already available
-        try:
-            self._ensure_nltk_resources()
-        except Exception as e:
-            logger.warning(f"Could not download NLTK resources: {e}")
+        self.use_deepseek = use_deepseek
+        self.translator = translator
         
         # Load custom terminology if provided
         if custom_terminology_file:
             self.load_terminology(custom_terminology_file)
     
-    def _ensure_nltk_resources(self):
-        """Ensure required NLTK resources are available."""
-        resources = [
-            ('tokenizers/punkt', 'punkt'),
-            ('corpora/stopwords', 'stopwords')
-        ]
-        
-        for resource_path, resource_name in resources:
-            try:
-                nltk.data.find(resource_path)
-            except LookupError:
-                logger.info(f"Downloading NLTK resource: {resource_name}")
-                nltk.download(resource_name, quiet=True)
-    
     def load_terminology(self, terminology_file):
-        """Load custom terminology from a CSV file.
+        """Load custom terminology from a file.
         
         Args:
-            terminology_file: Path to CSV file with terminology (format: term,translation)
+            terminology_file: Path to file with terminology (one term per line, or CSV)
         """
         if not os.path.exists(terminology_file):
             logger.warning(f"Terminology file not found: {terminology_file}")
             return
         
         try:
+            terms_loaded = 0
             with open(terminology_file, 'r', encoding='utf-8') as f:
-                reader = csv.reader(f)
-                for row in reader:
-                    if len(row) >= 1:
-                        term = row[0].strip()
-                        translation = row[1].strip() if len(row) > 1 else term
-                        
-                        # Add to custom terminology
-                        self.custom_terminology[term] = translation
-                        
-                        # Also add to general terminology with high frequency
-                        self.terminology[term] = 999  # High frequency to ensure it's used
+                # Try to determine format (CSV or simple list)
+                sample = f.read(1024)
+                f.seek(0)  # Reset file pointer
+                
+                if ',' in sample:  # Likely CSV format
+                    reader = csv.reader(f)
+                    for row in reader:
+                        if row and len(row) >= 1:
+                            term = row[0].strip()
+                            if term and not term.startswith('#'):  # Skip empty lines and comments
+                                # Add term with itself as translation (preserve it)
+                                self.custom_terminology[term] = term
+                                # Add to general terminology with high frequency
+                                self.terminology[term] = 999  # High frequency to ensure it's used
+                                terms_loaded += 1
+                else:  # Simple list format (one term per line)
+                    for line in f:
+                        term = line.strip()
+                        if term and not term.startswith('#'):  # Skip empty lines and comments
+                            # Add term with itself as translation (preserve it)
+                            self.custom_terminology[term] = term
+                            # Add to general terminology with high frequency
+                            self.terminology[term] = 999
+                            terms_loaded += 1
             
-            logger.info(f"Loaded {len(self.custom_terminology)} terms from {terminology_file}")
+            logger.info(f"Loaded {terms_loaded} terms from {terminology_file}")
         except Exception as e:
             logger.error(f"Error loading terminology file: {e}")
     
@@ -109,55 +137,21 @@ class TerminologyExtractor:
             text = text.lower()
         
         # Tokenize text into sentences
-        try:
-            sentences = sent_tokenize(text)
-        except:
-            # Fallback if NLTK fails
-            sentences = re.split(r'[.!?]+', text)
-        
-        # Get stopwords
-        try:
-            stop_words = set(stopwords.words('english'))
-        except:
-            # Fallback if NLTK stopwords not available
-            stop_words = set([
-                'i', 'me', 'my', 'myself', 'we', 'our', 'ours', 'ourselves', 'you', 
-                "you're", "you've", "you'll", "you'd", 'your', 'yours', 'yourself', 
-                'yourselves', 'he', 'him', 'his', 'himself', 'she', "she's", 'her', 
-                'hers', 'herself', 'it', "it's", 'its', 'itself', 'they', 'them', 
-                'their', 'theirs', 'themselves', 'what', 'which', 'who', 'whom', 
-                'this', 'that', "that'll", 'these', 'those', 'am', 'is', 'are', 'was',
-                'were', 'be', 'been', 'being', 'have', 'has', 'had', 'having', 'do', 
-                'does', 'did', 'doing', 'a', 'an', 'the', 'and', 'but', 'if', 'or', 
-                'because', 'as', 'until', 'while', 'of', 'at', 'by', 'for', 'with', 
-                'about', 'against', 'between', 'into', 'through', 'during', 'before', 
-                'after', 'above', 'below', 'to', 'from', 'up', 'down', 'in', 'out', 
-                'on', 'off', 'over', 'under', 'again', 'further', 'then', 'once', 
-                'here', 'there', 'when', 'where', 'why', 'how', 'all', 'any', 'both',
-                'each', 'few', 'more', 'most', 'other', 'some', 'such', 'no', 'nor', 
-                'not', 'only', 'own', 'same', 'so', 'than', 'too', 'very', 's', 't', 
-                'can', 'will', 'just', 'don', "don't", 'should', "should've", 'now', 
-                'd', 'll', 'm', 'o', 're', 've', 'y'
-            ])
+        sentences = simple_sentence_tokenize(text)
         
         # Extract candidate terms
         term_candidates = collections.defaultdict(int)
         
         for sentence in sentences:
             # Tokenize sentence
-            try:
-                tokens = word_tokenize(sentence)
-            except:
-                # Fallback if NLTK fails
-                tokens = re.findall(r'\b\w+\b', sentence)
+            tokens = simple_word_tokenize(sentence)
             
             # Filter tokens
-            tokens = [t for t in tokens if self._is_valid_token(t, stop_words)]
+            tokens = [t for t in tokens if self._is_valid_token(t)]
             
             # Extract n-grams (1 to max_term_length)
             for n in range(1, min(self.max_term_length + 1, len(tokens) + 1)):
-                for n_gram in ngrams(tokens, n):
-                    term = ' '.join(n_gram)
+                for term in generate_ngrams(tokens, n):
                     term_candidates[term] += 1
         
         # Filter terms by frequency
@@ -170,14 +164,61 @@ class TerminologyExtractor:
         self.terminology.update(extracted_terms)
         
         logger.info(f"Extracted {len(extracted_terms)} terms")
+        
+        # Process the terms (preserve them in their original form)
+        if extracted_terms:
+            self.process_terminology(extracted_terms.keys())
+        
         return extracted_terms
     
-    def _is_valid_token(self, token, stop_words):
+    def process_terminology(self, terms):
+        """Process terminology - preserve terms without translation.
+        
+        Args:
+            terms: List or set of terms to process
+        
+        Returns:
+            Dictionary of preserved terms {term: term}
+        """
+        if not terms:
+            return {}
+        
+        logger.info(f"Processing {len(terms)} terminology items (preserving original)")
+        
+        # Process all terms
+        for term in terms:
+            # Add the term with itself as the "translation" (preserving it)
+            self.custom_terminology[term] = term
+            
+        logger.info(f"Preserved {len(self.custom_terminology)} terms in their original form")
+        return self.custom_terminology
+    
+    def _translate_batch_with_deepseek(self, text, system_message):
+        """Send batch of text to Deepseek for translation with custom system message.
+        
+        Args:
+            text: Text to translate
+            system_message: Custom system message for Deepseek
+            
+        Returns:
+            Translated text
+        """
+        try:
+            # Try to use translator's custom method for system message translation if available
+            if hasattr(self.translator, 'translate_with_system_message'):
+                return self.translator.translate_with_system_message(text, system_message)
+            
+            # Fallback to regular translation
+            return self.translator.translate_text(text)
+        except Exception as e:
+            logger.error(f"Error translating terminology: {e}")
+            return ""
+    
+    def _is_valid_token(self, token):
         """Check if a token is valid for terminology extraction.
         
         Args:
             token: Token to check
-            stop_words: Set of stopwords to filter out
         
         Returns:
             True if token is valid, False otherwise
@@ -195,7 +236,7 @@ class TerminologyExtractor:
             return False
         
         # Filter out stopwords
-        if token.lower() in stop_words:
+        if token.lower() in STOPWORDS:
             return False
         
         return True

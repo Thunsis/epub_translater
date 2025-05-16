@@ -39,14 +39,14 @@ class DeepseekTranslator:
         "hi": "hindi",
     }
     
-    def __init__(self, api_key, source_lang="auto", target_lang="zh-CN", 
+    def __init__(self, api_key, source_lang="en", target_lang="zh-CN", 
                  model="deepseek-chat", max_retries=3, timeout=30, rate_limit=10):
         """Initialize the Deepseek translator.
         
         Args:
             api_key: Deepseek API key
-            source_lang: Source language code (default: auto)
-            target_lang: Target language code (default: zh-CN)
+            source_lang: Source language code (default: en for English)
+            target_lang: Target language code (default: zh-CN for Simplified Chinese)
             model: Deepseek model to use
             max_retries: Maximum number of retries for API calls
             timeout: Timeout for API calls in seconds
@@ -231,18 +231,26 @@ class DeepseekTranslator:
         """
         if is_batch:
             return (
-                f"You are a highly skilled translator from {self.source_lang_name} to {self.target_lang_name}. "
+                f"You are a highly skilled translator from {self.source_lang_name} to {self.target_lang_name} specializing in technical and academic content. "
                 f"Translate each section of text separated by '-----TRANSLATE_SEPARATOR_TIMESTAMP-----' into {self.target_lang_name}. "
                 f"Preserve original formatting, maintain the original meaning, and ensure a natural and fluent translation. "
-                f"Be accurate and considerate of context. "
+                f"Analyze the subject matter domain of the content and identify domain-specific terminology. "
+                f"DO NOT translate any professional terminology, including technical terms, product names, programming languages, "
+                f"scientific concepts, industry standards, and specialized jargon. Keep these in their original form. "
+                f"Use your understanding of various professional domains to identify these terms accurately. "
+                f"Look for terms that have specific meaning within a technical or scientific context. "
                 f"Reply only with the translations, separated by the same separator marker."
             )
         else:
             return (
-                f"You are a highly skilled translator from {self.source_lang_name} to {self.target_lang_name}. "
+                f"You are a highly skilled translator from {self.source_lang_name} to {self.target_lang_name} specializing in technical and academic content. "
                 f"Translate the following text into {self.target_lang_name}. "
                 f"Preserve original formatting, maintain the original meaning, and ensure a natural and fluent translation. "
-                f"Be accurate and considerate of context. "
+                f"Analyze the subject matter domain of the content and identify domain-specific terminology. "
+                f"DO NOT translate any professional terminology, including technical terms, product names, programming languages, "
+                f"scientific concepts, industry standards, and specialized jargon. Keep these in their original form. "
+                f"Use your understanding of various professional domains to identify these terms accurately. "
+                f"Look for terms that have specific meaning within a technical or scientific context. "
                 f"Reply only with the translation, no explanations or additional text."
             )
     
@@ -298,6 +306,34 @@ class DeepseekTranslator:
                 else:
                     logger.error(f"API request failed after {self.max_retries} retries: {str(e)}")
                     raise
+    
+    def translate_with_system_message(self, text, system_message):
+        """Translate text using a custom system message.
+        
+        Args:
+            text: Text to translate
+            system_message: Custom system message for Deepseek
+        
+        Returns:
+            Translated text
+        """
+        if not text.strip():
+            return text
+        
+        # Make API request with custom system message
+        response = self._make_api_request([
+            {"role": "system", "content": system_message},
+            {"role": "user", "content": text}
+        ])
+        
+        # Extract translation from response
+        try:
+            translation = response["choices"][0]["message"]["content"]
+            return translation.strip()  # No cleaning for custom system messages
+        except (KeyError, IndexError) as e:
+            logger.error(f"Error extracting translation: {e}")
+            logger.debug(f"Response: {response}")
+            return text  # Return original text on error
     
     def _clean_translation(self, text):
         """Clean and post-process translation.

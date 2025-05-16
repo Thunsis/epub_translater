@@ -29,3 +29,10 @@ Thumbs.db
 
 # Project specific
 epub_translator.log
+*.epub
+!examples/*.epub
+translated_*.epub
+_terms.csv
+*.bak
+temp/
+.translation_cache/

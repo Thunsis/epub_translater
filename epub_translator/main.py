@@ -13,10 +13,22 @@ import sys
 import logging
 from tqdm import tqdm
 
-from .config import Config
-from .epub_processor import EPUBProcessor
-from .translator import DeepseekTranslator
-from .term_extractor import TerminologyExtractor
+# Fix imports to work both as a module and as a script
+try:
+    # When run as a module in the package
+    from .config import Config
+    from .epub_processor import EPUBProcessor
+    from .translator import DeepseekTranslator
+    from .term_extractor import TerminologyExtractor
+except ImportError:
+    # When run as a script directly
+    import sys
+    import os
+    sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    from epub_translator.config import Config
+    from epub_translator.epub_processor import EPUBProcessor
+    from epub_translator.translator import DeepseekTranslator
+    from epub_translator.term_extractor import TerminologyExtractor
 
 
 def setup_logging(log_level):
@@ -82,9 +94,11 @@ def parse_arguments():
     )
     
     parser.add_argument(
-        "--auto-terms", 
-        help="Automatically extract domain-specific terminology",
-        action="store_true"
+        "--no-auto-terms", 
+        help="Disable automatic domain-specific terminology extraction (enabled by default)",
+        action="store_false",
+        dest="auto_terms",
+        default=True
     )
     
     parser.add_argument(
@@ -99,6 +113,20 @@ def parse_arguments():
         help="Number of paragraphs to translate in one batch (default: 10)",
         type=int, 
         default=10
+    )
+    
+    parser.add_argument(
+        "--max-workers", 
+        help="Maximum number of worker threads for parallel processing (default: 4)",
+        type=int, 
+        default=4
+    )
+    
+    parser.add_argument(
+        "--chunk-size", 
+        help="Size of content chunks for processing in characters (default: 5000)",
+        type=int, 
+        default=5000
     )
     
     parser.add_argument(
@@ -141,22 +169,45 @@ def main():
             target_lang=args.target_lang
         )
         
+        # Initialize terminology extractor with translator for Deepseek-powered terminology
         term_extractor = TerminologyExtractor(
             min_frequency=args.min_term_freq,
-            custom_terminology_file=args.terminology
+            custom_terminology_file=args.terminology,
+            use_deepseek=True,  # Enable Deepseek for terminology translation
+            translator=translator  # Connect translator for terminology translation
         )
         
         epub_processor = EPUBProcessor(
             translator=translator,
             term_extractor=term_extractor,
             batch_size=args.batch_size,
-            auto_extract_terms=args.auto_terms
+            auto_extract_terms=args.auto_terms,
+            max_workers=args.max_workers,
+            chunk_size=args.chunk_size
         )
+        
+        # Create data/terminology directory if it doesn't exist
+        terminology_dir = os.path.join('data', 'terminology')
+        os.makedirs(terminology_dir, exist_ok=True)
         
         # Process the EPUB file
         logger.info(f"Starting translation of {args.input_file}")
-        epub_processor.translate_epub(args.input_file, args.output)
-        logger.info(f"Translation completed. Output saved to {args.output}")
+        stats = epub_processor.translate_epub(args.input_file, args.output)
+        
+        # Save extracted terminology to file
+        if args.auto_terms and hasattr(term_extractor, 'terminology') and term_extractor.terminology:
+            # Create terminology filename based on input file
+            input_basename = os.path.splitext(os.path.basename(args.input_file))[0]
+            term_output = os.path.join(terminology_dir, f"{input_basename}_terms.csv")
+            term_extractor.save_terminology(term_output)
+            logger.info(f"Extracted terminology saved to {term_output}")
+        
+        # Display performance statistics
+        if 'processing_time' in stats and 'chars_per_second' in stats:
+            logger.info(f"Translation completed in {stats['processing_time']:.2f} seconds")
+            logger.info(f"Processing speed: {stats['chars_per_second']:.2f} characters per second")
+        
+        logger.info(f"Output saved to {args.output}")
         
     except Exception as e:
         logger.error(f"Error during translation: {str(e)}", exc_info=True)
