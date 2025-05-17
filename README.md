@@ -24,7 +24,7 @@ python main.py input.epub -o output.epub --optimize      # 启用优化（默认
 python main.py input.epub -o output.epub --no-optimize   # 禁用优化
 
 # 下载NLTK数据（避免处理时下载卡住）
-python -m epub_translator.download_nltk
+python main.py --download-nltk
 ```
 
 ### 命令选项
@@ -85,7 +85,7 @@ pip install -r requirements.txt
 4. 下载NLTK资源（必需）：
 
 ```bash
-python -m epub_translator.download_nltk
+python main.py --download-nltk
 ```
 
 此脚本处理所需的NLTK数据下载，包含适当的SSL配置和错误处理。
@@ -253,12 +253,7 @@ python main.py input.epub --terminology terms.csv
 
 ## 故障排除
 
-1. **NLTK资源下载失败**：如果程序在"Downloading NLTK punkt tokenizer"消息后挂起，请使用专用下载脚本：
-   ```bash
-   python -m epub_translator.download_nltk
-   ```
-   
-   或者使用仅下载选项：
+1. **NLTK资源下载失败**：如果程序在"Downloading NLTK punkt tokenizer"消息后挂起，请使用仅下载选项：
    ```bash
    python main.py --download-nltk
    ```

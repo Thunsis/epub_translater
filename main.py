@@ -25,7 +25,7 @@ def check_nltk_data():
         return True
     except LookupError:
         logger.error("NLTK punkt tokenizer not found. This is required for text processing.")
-        logger.error("Please run 'python -m epub_translator.download_nltk' first to download required data.")
+        logger.error("Please run 'python main.py --download-nltk' first to download required data.")
         return False
 
 def translate_epub(input_path, output_path, config_path=None, api_key=None, 
@@ -196,7 +196,7 @@ def main():
             return 0
         except Exception as e:
             print(f"Error downloading NLTK data: {e}")
-            print("Please run the script 'python -m epub_translator.download_nltk' instead.")
+            print("Please try again with 'python main.py --download-nltk'.")
             return 1
     
     # Determine whether to use optimized methods
