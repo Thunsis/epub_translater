@@ -2,4 +2,6 @@ ebooklib>=0.17.1
 beautifulsoup4>=4.9.3
 requests>=2.25.1
 tqdm>=4.62.3
+aiohttp>=3.8.1
+nltk>=3.6.7
 # Removed complex ML dependencies for testing

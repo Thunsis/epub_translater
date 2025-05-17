@@ -121,16 +121,28 @@ class TerminologyExtractor:
         except Exception as e:
             logger.error(f"Error loading terminology file: {e}")
     
-    def extract_terminology(self, text):
+    def extract_terminology(self, text, is_toc=False):
         """Extract domain-specific terminology from text.
         
         Args:
             text: Text to extract terminology from
+            is_toc: Whether the text is from a table of contents
         
         Returns:
             Dictionary of extracted terms and their frequencies
         """
-        logger.info("Extracting terminology from text...")
+        # Check if we should use DeepSeek for smart extraction
+        if self.use_deepseek and self.translator:
+            if is_toc:
+                logger.info("Using DeepSeek to extract domain terminology from TOC...")
+                return self.extract_terminology_with_deepseek(text, is_toc=True)
+            elif len(text) < 100000:  # For manageable text size
+                logger.info("Using DeepSeek to extract domain terminology...")
+                return self.extract_terminology_with_deepseek(text)
+        
+        # Fall back to frequency-based extraction for very large texts
+        # or when DeepSeek is not available
+        logger.info("Extracting terminology using frequency analysis...")
         
         # Preprocess text
         if self.ignore_case:
@@ -163,13 +175,101 @@ class TerminologyExtractor:
         # Add to terminology dictionary
         self.terminology.update(extracted_terms)
         
-        logger.info(f"Extracted {len(extracted_terms)} terms")
+        logger.info(f"Extracted {len(extracted_terms)} terms through frequency analysis")
         
         # Process the terms (preserve them in their original form)
         if extracted_terms:
             self.process_terminology(extracted_terms.keys())
         
         return extracted_terms
+    
+    def extract_terminology_with_deepseek(self, text, is_toc=False):
+        """Extract domain-specific terminology using DeepSeek's understanding.
+        
+        Args:
+            text: Text to extract terminology from
+            is_toc: Whether the text is from table of contents
+        
+        Returns:
+            Dictionary of extracted terms and their frequencies
+        """
+        if not self.translator:
+            logger.warning("No translator available for DeepSeek terminology extraction")
+            return {}
+        
+        # Create a system message for terminology extraction from TOC/content
+        if is_toc:
+            system_message = (
+                "You are an expert terminology extractor that specializes in identifying domain-specific"
+                " technical terms from book tables of contents and chapter titles. "
+                "Analyze the provided table of contents and extract all domain-specific technical terminology. "
+                "Focus on identifying:"
+                "\n1. Professional/technical terms specific to the book's domain"
+                "\n2. Specialized jargon and technical nomenclature"
+                "\n3. Important proper nouns that should not be translated"
+                "\n4. Technology names, frameworks, standards, and protocols"
+                "\n5. Scientific concepts and methodologies mentioned in chapter titles"
+                "\nReturn ONLY a list of the extracted terms (one term per line). Do not include explanations, "
+                "definitions, or any other text beyond the extracted terms."
+            )
+        else:
+            system_message = (
+                "You are an expert terminology extractor that specializes in identifying domain-specific"
+                " technical terms from technical content. "
+                "Analyze the provided text and extract all domain-specific technical terminology. "
+                "Focus on identifying:"
+                "\n1. Professional/technical terms"
+                "\n2. Specialized jargon and nomenclature"
+                "\n3. Important proper nouns"
+                "\n4. Technology names, frameworks, standards, and protocols"
+                "\n5. Scientific concepts and methodologies"
+                "\nReturn ONLY a list of the extracted terms (one term per line). Do not include explanations, "
+                "definitions, or any other text beyond the extracted terms."
+            )
+        
+        # Truncate text if it's too long
+        max_length = 10000 if is_toc else 20000
+        if len(text) > max_length:
+            logger.info(f"Truncating text to {max_length} characters for terminology extraction")
+            # For TOC, take the beginning which contains the most important terms
+            if is_toc:
+                sample_text = text[:max_length]
+            else:
+                # For full text, take samples from beginning, middle and end
+                third = max_length // 3
+                sample_text = text[:third] + "\n\n" + text[len(text)//2-third//2:len(text)//2+third//2] + "\n\n" + text[-third:]
+        else:
+            sample_text = text
+        
+        # Extract terminology using Deepseek
+        try:
+            logger.info("Sending terminology extraction request to DeepSeek...")
+            response = self._translate_batch_with_deepseek(sample_text, system_message)
+            
+            # Process the response - expect one term per line
+            terms = [line.strip() for line in response.split('\n') if line.strip()]
+            
+            # Filter out very short terms and non-terminology
+            terms = [term for term in terms if len(term) >= 3 and not term.lower() in STOPWORDS]
+            
+            # Add terms to terminology dictionary with high frequency to ensure they're used
+            extracted_terms = {term: 100 for term in terms}
+            
+            # Update the global terminology dictionary
+            self.terminology.update(extracted_terms)
+            
+            logger.info(f"DeepSeek identified {len(extracted_terms)} terminology items")
+            
+            # Process the terms (preserve them in their original form)
+            if extracted_terms:
+                self.process_terminology(extracted_terms.keys())
+            
+            return extracted_terms
+            
+        except Exception as e:
+            logger.error(f"Error using DeepSeek for terminology extraction: {e}")
+            logger.info("Falling back to frequency-based extraction")
+            return self.extract_terminology(text, is_toc=False)
     
     def process_terminology(self, terms):
         """Process terminology - preserve terms without translation.

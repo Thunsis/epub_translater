@@ -14,22 +14,25 @@ setup(
     version="0.1.0",
     author="Epub Translator Team",
     author_email="your.email@example.com",
-    description="A tool for translating EPUB files while preserving formatting and terminology",
+    description="A tool for translating EPUB files with optimized async processing and terminology preservation",
     long_description=long_description,
     long_description_content_type="text/markdown",
-    url="https://github.com/yourusername/epub_translater",
+    url="https://github.com/yourusername/epub_translate",
     packages=find_packages(),
     classifiers=[
         "Programming Language :: Python :: 3",
         "License :: OSI Approved :: MIT License",
         "Operating System :: OS Independent",
+        "Topic :: Text Processing :: Linguistic",
+        "Topic :: Utilities"
     ],
     python_requires=">=3.6",
     install_requires=requirements,
     entry_points={
         "console_scripts": [
-            "epub-translator=epub_translator.main:main",
+            "epub-translator=main:main",
         ],
     },
     include_package_data=True,
+    keywords=["epub", "translation", "deepseek", "nlp", "async", "terminology"]
 )

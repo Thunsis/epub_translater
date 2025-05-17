@@ -15,6 +15,7 @@ import re
 import time
 import threading
 import queue
+import nltk
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from collections import defaultdict
 from tqdm import tqdm
@@ -23,7 +24,15 @@ from ebooklib import epub
 from bs4 import BeautifulSoup
 import base64
 
+# Configure logger first
 logger = logging.getLogger("epub_translator.epub_processor")
+
+# Try to ensure NLTK data is available for smart text splitting
+try:
+    nltk.data.find('tokenizers/punkt')
+except LookupError:
+    logger.info("Downloading NLTK punkt tokenizer for smart text splitting")
+    nltk.download('punkt', quiet=True)
 
 
 class EPUBProcessor:
@@ -215,14 +224,26 @@ class EPUBProcessor:
                     book.add_metadata('DC', meta_type, item[0])
     
     def _extract_terminology(self, html_items):
-        """Extract terminology from HTML items.
+        """Extract terminology from HTML items with table of contents optimization.
         
         Args:
             html_items: List of ebooklib.epub.EpubHtml items
         """
-        # Extract text content from all items in parallel
+        # First try to extract terminology from table of contents for efficiency
+        toc_text = self._extract_toc_text(html_items)
+        
+        if toc_text:
+            logger.info("First extracting terminology from table of contents")
+            # Extract initial terminology from ToC
+            self.term_extractor.extract_terminology(toc_text, is_toc=True)
+            initial_terms_count = len(self.term_extractor.terminology)
+            logger.info(f"Extracted {initial_terms_count} initial terminology items from ToC")
+        
+        # Then process the full content to find additional terms
+        logger.info("Processing full content for complete terminology extraction")
         all_text = ""
         
+        # Get a small sample of text from each HTML item to avoid processing the entire book
         with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
             futures = []
             
@@ -238,9 +259,76 @@ class EPUBProcessor:
                 except Exception as e:
                     logger.error(f"Error extracting text: {str(e)}")
         
-        # Extract terminology from text
+        # Extract terminology from text, adding to any terms already found from ToC
         self.term_extractor.extract_terminology(all_text)
-        logger.info(f"Extracted {len(self.term_extractor.terminology)} terminology items")
+        logger.info(f"Extracted {len(self.term_extractor.terminology)} total terminology items")
+    
+    def _extract_toc_text(self, html_items):
+        """Extract text from the table of contents.
+        
+        Args:
+            html_items: List of ebooklib.epub.EpubHtml items
+        
+        Returns:
+            String containing the table of contents text or empty string if not found
+        """
+        # Look for common TOC identifiers in HTML items
+        toc_text = ""
+        toc_identifiers = [
+            'toc', 'contents', 'table-of-contents', 'tableofcontents', 
+            'content-table', 'index', 'nav', 'catalog', 'menu'
+        ]
+        
+        # Try to find TOC by looking for nav elements and common TOC identifiers
+        for item in html_items:
+            content = item.get_content().decode('utf-8')
+            soup = BeautifulSoup(content, 'html.parser')
+            
+            # Look for nav elements which often contain the TOC
+            nav_elements = soup.find_all('nav')
+            if nav_elements:
+                for nav in nav_elements:
+                    toc_text += nav.get_text() + "\n"
+                    
+            # Check if this item looks like a TOC based on ID/class/filename
+            item_id = item.get_id().lower()
+            file_name = item.get_name().lower()
+            
+            is_toc = False
+            for identifier in toc_identifiers:
+                if (identifier in item_id or 
+                    identifier in file_name or 
+                    soup.find(id=identifier) or 
+                    soup.find(class_=identifier)):
+                    is_toc = True
+                    break
+            
+            if is_toc:
+                # Extract just the text from this item, skipping non-content elements
+                for tag in soup.find_all(self.SKIP_TAGS):
+                    tag.extract()
+                toc_text += soup.get_text() + "\n"
+                
+            # Look for headings with chapter/section indicators
+            headings = soup.find_all(['h1', 'h2', 'h3', 'h4', 'h5', 'h6'])
+            for heading in headings:
+                heading_text = heading.get_text().strip()
+                if heading_text:
+                    toc_text += heading_text + "\n"
+        
+        # Also extract chapter titles, which likely contain domain terminology
+        for item in html_items:
+            content = item.get_content().decode('utf-8')
+            soup = BeautifulSoup(content, 'html.parser')
+            
+            # Get main headings which are often chapter titles
+            headings = soup.find_all(['h1', 'h2'], limit=5)  # Limit to first few headings
+            for heading in headings:
+                heading_text = heading.get_text().strip()
+                if heading_text and len(heading_text.split()) > 1:  # Skip single-word headings
+                    toc_text += heading_text + "\n"
+        
+        return toc_text
     
     def _extract_text_from_item(self, item):
         """Extract text content from an EPUB HTML item.
@@ -402,8 +490,13 @@ class EPUBProcessor:
                 self.term_extractor.protect_terminology(text) for text in translations_to_do
             ]
             
-            # Translate texts
-            translated_texts = self.translator.translate_batch(protected_texts)
+            # Check if the translator has the optimized methods
+            if hasattr(self.translator, 'translate_batch_optimized'):
+                # Use optimized async batching if available
+                translated_texts = self.translator.translate_batch_optimized(protected_texts)
+            else:
+                # Fall back to regular batch translation
+                translated_texts = self.translator.translate_batch(protected_texts)
             
             # Restore terminology
             translated_texts = [
