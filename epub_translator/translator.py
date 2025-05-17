@@ -357,7 +357,22 @@ class DeepseekTranslator:
                 )
                 response.raise_for_status()
                 self.last_request_time = time.time()
-                return response.json()
+                # Log the initial response success
+                response_json = response.json()
+                logger.info(f"Received API response (status: {response.status_code})")
+                
+                # Extract and log the entire response content for real-time visibility
+                try:
+                    content = response_json["choices"][0]["message"]["content"]
+                    logger.info(f"DEEPSEEK RESPONSE: {content}")
+                    
+                    # Also log metadata if available
+                    if "usage" in response_json:
+                        logger.info(f"Usage stats: {response_json['usage']}")
+                except (KeyError, IndexError):
+                    logger.warning("Could not extract content from response")
+                
+                return response_json
                 
             except requests.exceptions.RequestException as e:
                 if attempt < self.max_retries:
@@ -533,11 +548,8 @@ class DeepseekTranslator:
         if not texts_to_translate:
             return translations
         
-        # Get or create event loop
-        loop = self._get_event_loop()
-        
-        # Translate the batch using async processing
-        batch_translations = loop.run_until_complete(
+        # 使用安全的异步执行方法
+        batch_translations = self._safe_run_async(
             self._translate_batch_texts_async(texts_to_translate, max_tokens)
         )
         
@@ -550,6 +562,39 @@ class DeepseekTranslator:
                 self.translation_cache[cache_key] = batch_translations[idx]
         
         return translations
+        
+    def _safe_run_async(self, coroutine):
+        """安全地运行异步协程，处理各种事件循环环境。
+        
+        此方法确保异步操作在正确的事件循环上下文中执行，避免
+        "Timeout context manager should be used inside a task" 错误。
+        
+        Args:
+            coroutine: 要执行的异步协程
+            
+        Returns:
+            协程的执行结果
+        """
+        try:
+            # 尝试获取当前事件循环
+            loop = asyncio.get_event_loop()
+        except RuntimeError:
+            # 如果当前线程没有事件循环，创建一个新的
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            
+        # 检查循环是否在运行中
+        if loop.is_running():
+            # 创建一个新的临时事件循环来执行协程
+            # 这可能会导致性能降低，但能避免嵌套事件循环的问题
+            temp_loop = asyncio.new_event_loop()
+            try:
+                return temp_loop.run_until_complete(coroutine)
+            finally:
+                temp_loop.close()
+        else:
+            # 如果循环没有运行，直接使用它
+            return loop.run_until_complete(coroutine)
     
     async def _translate_single_text_async(self, text):
         """Translate a single text using Deepseek API asynchronously.
@@ -738,7 +783,20 @@ class DeepseekTranslator:
                             continue
                             
                         response.raise_for_status()
-                        return await response.json()
+                        response_json = await response.json()
+                        
+                        # Log the complete response content for real-time visibility
+                        try:
+                            content = response_json["choices"][0]["message"]["content"]
+                            logger.info(f"DEEPSEEK ASYNC RESPONSE: {content}")
+                            
+                            # Also log usage stats if available
+                            if "usage" in response_json:
+                                logger.info(f"Usage stats: {response_json['usage']}")
+                        except (KeyError, IndexError):
+                            logger.warning("Could not extract content from async response")
+                        
+                        return response_json
                         
                 except (aiohttp.ClientError, asyncio.TimeoutError) as e:
                     if attempt < self.max_retries:

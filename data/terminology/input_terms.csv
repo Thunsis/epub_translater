@@ -1,0 +1,84 @@
+Term,Preserve,Reason
+@EnableKafkaStreams,True,Spring annotation
+@KafkaListener,True,Spring annotation
+Admin API,True,Kafka management interface
+Apache Kafka,True,Proper name of the event streaming platform
+Avro,True,Data serialization format
+CDC,True,Change Data Capture (common data integration pattern)
+Confluent CLI,True,Proper name of the command-line interface
+Confluent Cloud,True,Proper name of the managed Kafka service
+Confluent Platform,True,Proper name of the Kafka distribution
+Consumed,True,Kafka Streams DSL configuration class
+DAG,True,Directed Acyclic Graph (common technical term)
+Docker,True,Containerization platform
+EOS,True,Exactly Once Semantics (Kafka concept)
+EmitStrategy,True,Kafka Streams windowing configuration
+Exactly-once delivery,True,Specific Kafka processing semantic
+GlobalKTable,True,Kafka Streams API component
+Gradle,True,Build tool
+ISR,True,In-Sync Replicas (Kafka concept)
+Interactive Queries,True,Kafka Streams feature name
+IoT,True,Internet of Things (common domain)
+JSON Schema,True,Standard for JSON document structure
+JoinWindows,True,Kafka Streams join configuration
+KRaft,True,Kafka's Raft consensus implementation
+KStream,True,Kafka Streams API component
+KTable,True,Kafka Streams API component
+Kafka Connect,True,Framework for connecting Kafka with external systems
+Kafka Streams,True,Library for stream processing applications
+Kafka brokers,True,Core component of Kafka architecture
+KafkaTemplate,True,Spring Kafka class
+LSO,True,Last Stable Offset (Kafka concept)
+MVC,True,Model-View-Controller (common architectural pattern)
+Materialized,True,Kafka Streams state store configuration class
+Maven,True,Build tool
+OOM,True,Out of Memory (common technical term)
+ORM,True,Object-Relational Mapping (common technical term)
+Processor API,True,Low-level Kafka Streams API
+Produced,True,Kafka Streams DSL configuration class
+Protobuf,True,Protocol Buffers serialization format
+REST API,True,Standard API architecture
+RecordNameStrategy,True,Schema Registry subject naming strategy
+Schema Registry,True,Specific Confluent component for schema management
+Serde,True,Serializer/deserializer concept in Kafka
+Single Message Transforms,True,Kafka Connect feature
+Spring Boot,True,Java framework
+Spring Kafka,True,Integration module
+StreamJoined,True,Kafka Streams join configuration class
+StreamThread,True,Kafka Streams implementation detail
+TimestampExtractor,True,Kafka Streams interface
+TopicNameStrategy,True,Schema Registry subject naming strategy
+TopicRecordNameStrategy,True,Schema Registry subject naming strategy
+ValueJoiner,True,Kafka Streams join interface
+WallclockTimestampExtractor,True,Specific timestamp extractor implementation
+Zookeeper,True,Kafka dependency component
+backward compatibility,True,Schema evolution concept
+changelog topics,True,Kafka Streams implementation detail
+close(),True,Common Java/Kafka method name
+co-partitioning,True,Stream-stream join requirement
+commitAsync(),True,Kafka consumer method name
+commitSync(),True,Kafka consumer method name
+compacted topics,True,Specific Kafka topic type
+forward compatibility,True,Schema evolution concept
+full compatibility,True,Schema evolution concept
+hopping windows,True,Stream processing window type
+idempotent producer,True,Kafka producer configuration
+init(),True,Processor API method name
+ksqlDB,True,Proper name of the streaming SQL engine for Kafka
+leaders and followers,True,Replication terminology in Kafka
+offsets,True,Technical term for message position tracking
+partitions,True,Core Kafka concept for data distribution
+poll(),True,Kafka consumer method name
+process(),True,Processor API method name
+punctuate,True,Kafka Streams Processor API method
+segments,True,Kafka storage implementation detail
+send(),True,Kafka producer method name
+session windows,True,Stream processing window type
+sliding windows,True,Stream processing window type
+standby tasks,True,Kafka Streams fault tolerance feature
+state store,True,Kafka Streams persistence concept
+tiered storage,True,Kafka storage architecture concept
+topics,True,Fundamental Kafka concept for data organization
+transactional producer,True,Kafka producer type
+tumbling windows,True,Stream processing window type
+underreplicated partitions,True,Specific Kafka health metric

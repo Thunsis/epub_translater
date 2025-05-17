@@ -79,28 +79,6 @@ def _set_metadata(self, book, metadata):
             for item in metadata[meta_type]:
                 book.add_metadata('DC', meta_type, item[0])
 
-def _collect_word_frequencies(self, text):
-    """Collect word frequencies from text to enhance terminology extraction.
-    
-    This helps identify important technical terms by frequency analysis.
-    
-    Args:
-        text: Text to analyze
-        
-    Returns:
-        Counter object with word frequencies
-    """
-    # Split text into words (keeping only alphanumeric)
-    words = re.findall(r'\b[a-zA-Z0-9_\-]+\b', text)
-    
-    # Count frequencies (case-insensitive)
-    word_freq = Counter([word.lower() for word in words if len(word) > 2])
-    
-    # Update global word frequencies
-    self.word_frequencies.update(word_freq)
-    
-    return word_freq
-
 def _save_translation_cache(self):
     """Save translation cache to file."""
     if not self.checkpoint_manager or not self.translation_cache:

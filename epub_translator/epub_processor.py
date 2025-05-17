@@ -27,7 +27,6 @@ from epub_translator.epub_processor_translation import (
 from epub_translator.epub_processor_utils import (
     _extract_metadata,
     _set_metadata,
-    _collect_word_frequencies,
     _save_translation_cache,
     _dummy_extract_terminology,
     _extract_toc_text,
@@ -45,7 +44,6 @@ EPUBProcessor._translate_item_parallel = _translate_item_parallel
 EPUBProcessor._translate_batch = _translate_batch
 EPUBProcessor._extract_metadata = _extract_metadata
 EPUBProcessor._set_metadata = _set_metadata
-EPUBProcessor._collect_word_frequencies = _collect_word_frequencies
 EPUBProcessor._save_translation_cache = _save_translation_cache
 EPUBProcessor._extract_terminology = _dummy_extract_terminology
 EPUBProcessor._extract_toc_text = _extract_toc_text

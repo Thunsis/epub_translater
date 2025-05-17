@@ -61,10 +61,30 @@ def translate_prepared_content(self, input_path, output_path, force_restart=Fals
         # Set up progress tracker
         self.progress_tracker.setup(self.checkpoint_manager.workdir)
         
+        # 检查是否存在checkpoint并加载它
+        if not force_restart:
+            checkpoint_exists, valid = self.checkpoint_manager.check_existing_checkpoint()
+            if checkpoint_exists and valid:
+                logger.info("找到有效的checkpoint，准备恢复翻译状态")
+                # 如果有翻译缓存，也可以恢复它
+                cache_path = f"{self.checkpoint_manager.workdir}/translation_cache.json"
+                if os.path.exists(cache_path):
+                    try:
+                        with open(cache_path, 'r', encoding='utf-8') as f:
+                            import json
+                            self.translation_cache = json.load(f)
+                        logger.info(f"已恢复 {len(self.translation_cache)} 个缓存的翻译")
+                    except Exception as e:
+                        logger.error(f"恢复翻译缓存时出错: {e}")
+            elif checkpoint_exists and not valid:
+                logger.warning("找到无效的checkpoint，将开始新的翻译")
+                self.checkpoint_manager.clear_checkpoint()
+        
         # Check if all the required phases from local processing are completed
         local_processing = self.checkpoint_manager.state["phases"]["local_processing"]
         if not local_processing.get("translation_preparation_completed", False):
-            logger.error("Content preparation has not been completed. Run with --extract-only first.")
+            logger.error("Content preparation has not been completed. Run with --phase prepare first.")
+            logger.debug(f"Local processing state: {local_processing}")
             return None
     else:
         logger.error("Checkpoint support is required for two-phase processing")
@@ -469,13 +489,24 @@ def _translate_prepared_batch(self, item_id, batch_id, batch_key):
                 # Use original texts
                 texts_to_translate = translations_to_do
             
-            # Check if the translator has the optimized methods
-            if hasattr(self.translator, 'translate_batch_optimized'):
-                # Use optimized async batching if available
-                translated_texts = self.translator.translate_batch_optimized(texts_to_translate)
-            else:
-                # Fall back to regular batch translation
+            # 在线程池环境中使用异步可能导致问题
+            # 直接使用同步批量翻译方法，避免"Timeout context manager should be used inside a task"错误
+            try:
+                # 尝试使用标准的同步翻译方法
                 translated_texts = self.translator.translate_batch(texts_to_translate)
+            except Exception as e:
+                logger.error(f"标准翻译方法失败: {e}")
+                # 如果失败，尝试逐个翻译文本（最慢但最安全的方法）
+                translated_texts = []
+                for text in texts_to_translate:
+                    try:
+                        # 单个文本翻译通常更可靠
+                        result = self.translator.translate_text(text)
+                        translated_texts.append(result)
+                    except Exception as text_e:
+                        logger.error(f"单个文本翻译失败: {text_e}")
+                        # 如果翻译失败，返回原文
+                        translated_texts.append(text)
             
             # Restore terminology
             if protected_texts and self.term_extractor:
@@ -1169,13 +1200,24 @@ def _translate_batch(self, segments, item_dir=None, item_id=None, batch_id=None)
         # Directly translate the original texts without terminology protection
         protected_texts = None
         if translations_to_do:
-            # Check if the translator has the optimized methods
-            if hasattr(self.translator, 'translate_batch_optimized'):
-                # Use optimized async batching if available
-                translated_texts = self.translator.translate_batch_optimized(translations_to_do)
-            else:
-                # Fall back to regular batch translation
+            # 在线程池环境中使用异步可能导致问题
+            # 直接使用同步批量翻译方法，避免"Timeout context manager should be used inside a task"错误
+            try:
+                # 尝试使用标准的同步翻译方法
                 translated_texts = self.translator.translate_batch(translations_to_do)
+            except Exception as e:
+                logger.error(f"标准翻译方法失败: {e}")
+                # 如果失败，尝试逐个翻译文本（最慢但最安全的方法）
+                translated_texts = []
+                for text in translations_to_do:
+                    try:
+                        # 单个文本翻译通常更可靠
+                        result = self.translator.translate_text(text)
+                        translated_texts.append(result)
+                    except Exception as text_e:
+                        logger.error(f"单个文本翻译失败: {text_e}")
+                        # 如果翻译失败，返回原文
+                        translated_texts.append(text)
             
             # Cache translations
             for i, text in enumerate(translations_to_do):

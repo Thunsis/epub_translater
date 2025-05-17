@@ -45,7 +45,7 @@ def get_translator(config):
         rate_limit=config.getint("deepseek", "rate_limit")
     )
 
-def get_term_extractor(config, translator=None, checkpoint_manager=None, word_frequencies=None):
+def get_term_extractor(config, translator=None, checkpoint_manager=None):
     from .term_extractor import TerminologyExtractor
     
     # Get workdir from checkpoint manager if available
@@ -63,10 +63,6 @@ def get_term_extractor(config, translator=None, checkpoint_manager=None, word_fr
         use_deepseek=config.getboolean("terminology", "use_deepseek", fallback=True)
     )
     
-    # Set word frequencies if provided
-    if word_frequencies:
-        term_extractor.word_frequencies.update(word_frequencies)
-    
     return term_extractor
 
 def get_processor(config, translator, term_extractor):
@@ -81,10 +77,6 @@ def get_processor(config, translator, term_extractor):
         config=config
     )
     
-    # 确保术语提取器能够使用处理器中收集的词频信息
-    if term_extractor and hasattr(processor, 'word_frequencies'):
-        term_extractor.word_frequencies = processor.word_frequencies
-        
     return processor
 
 def has_checkpoint_support():

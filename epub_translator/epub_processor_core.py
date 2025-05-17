@@ -98,9 +98,6 @@ class EPUBProcessor:
         # Initialize text divider for paragraph-aware batching
         self.text_divider = TextDivider()
         
-        # Track word frequency for terminology extraction enhancement
-        self.word_frequencies = Counter()
-        
         # Signal handling for graceful termination
         self._setup_signal_handlers()
     
