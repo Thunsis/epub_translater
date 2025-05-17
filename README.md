@@ -34,7 +34,7 @@ python main.py --download-nltk
 | `--download-nltk` | 下载NLTK数据并退出 | - |
 | `-o, --output` | 输出EPUB文件路径 | `translated_[输入文件名]` |
 | `-c, --config` | 配置文件路径 | `config.ini` |
-| `-k, --api-key` | DeepSeek API密钥 | 从配置文件中获取 |
+| `-k, --api-key` | Deepseek API密钥 | 从配置文件中获取 |
 | `-s, --source-lang` | 源语言代码 | `en` |
 | `-t, --target-lang` | 目标语言代码 | `zh-CN` |
 | `--terminology` | 自定义术语表文件路径 | 无 |
@@ -45,11 +45,12 @@ python main.py --download-nltk
 | `--optimize` | 使用优化的异步翻译 | `True` |
 | `--no-optimize` | 禁用优化翻译 | `False` |
 | `--log-level` | 日志级别 (debug,info,warning,error) | `info` |
+| `--chunk-size` | 内容块的字符大小 | - |
 
 ## 功能特点
 
-- **高性能异步翻译**：使用异步请求和并行处理，速度最高提升20倍
-- **智能专业术语提取**：首先从目录中提取术语以提高效率
+- **高性能异步翻译**：使用异步请求和并行处理，速度最高提升5-20倍
+- **智能专业术语提取**：自动从文档中提取重要术语
 - **多线程并行处理**：结合多线程与异步处理实现最大吞吐量
 - 在不同语言之间翻译EPUB文件（默认：英语到中文）
 - 保留原始格式、图像和布局
@@ -99,11 +100,11 @@ python main.py --download-nltk
 3. **并行处理**：结合多线程和异步处理以获得最佳性能
 4. **连接池**：重用HTTP连接以减少开销
 5. **智能文本分割**：使用NLTK在句子边界分割文本
-6. **高级限速**：使用令牌桶算法实现最佳吞吐量
+6. **高级限速**：使用令牌桶算法实现最佳API请求控制
 7. **HTTP压缩**：启用gzip压缩以减少带宽使用
 8. **优化错误处理**：对API重试实现指数退避
 
-### 预期性能提升
+### 性能提升
 
 | **优化技术** | **预期加速效果** | **优势** |
 |------------|----------------|---------|
@@ -179,23 +180,26 @@ concurrent_requests = 5
 
 ### 工作流程
 
-翻译过程遵循以下明确步骤：
+翻译过程遵循以下步骤：
 
 1. **预处理与分析**：工具首先解析EPUB文件，提取所有文本内容和文档结构
-2. **智能术语提取阶段**：
-   - Deepseek分析整个文档，识别潜在技术术语
-   - 基于文档的专业领域识别特定领域的术语
-   - 根据专业上下文中的术语使用进行评估
-   - 考虑术语频率，过滤超过最小频率阈值的术语
-   - 通过文本上下文理解术语的专业含义
-   - 生成术语列表，保存至`data/terminology/[filename]_terms.csv`
+2. **术语提取阶段**：
+   - 首先从目录和章节标题中提取术语：
+     * 识别和提取目录（TOC）和章节标题中的术语
+     * 这些术语往往是书籍领域的关键概念
+   - 然后分析文档正文内容：
+     * 使用Deepseek分析识别专业术语
+     * 对于大型文档使用智能采样技术
+     * 同时使用基于频率的统计方法提取常见术语
+   - 自动提取的术语会保存为CSV文件：
+     * 保存路径：`data/terminology/[filename]_terms.csv`
+     * 包含术语、频率和自定义翻译
 3. **术语保护阶段**：
    - 在翻译前用特殊标记包围已识别的术语
    - 标记格式：`[[TERM:original term]]`
 4. **翻译处理阶段**：
    - Deepseek API在翻译过程中保留这些特殊标记
    - 标记内的术语保持不被翻译
-   - 通过Deepseek的领域理解确保上下文中术语的连贯性
 5. **术语恢复阶段**：
    - 翻译后，特殊标记被替换为原始术语
    - 确保所有技术术语保持原样
@@ -241,7 +245,7 @@ python main.py input.epub --terminology terms.csv
 
 ## 性能比较
 
-以下是不同配置的性能比较（基于10MB EPUB文件）：
+以下是不同配置的性能比较（基于测试数据）：
 
 | 配置 | 处理时间 | 内存使用 | 速度提升 |
 |---------------|----------------|--------------|---------|
@@ -251,20 +255,48 @@ python main.py input.epub --terminology terms.csv
 | 完全优化（8线程） | ~5分钟 | ~900MB | 8倍 |
 | 最大性能（16线程） | ~2.5分钟 | ~1.2GB | 16倍 |
 
+## 支持的语言
+
+Deepseek API支持以下语言间的翻译：
+
+- 英语 (en)
+- 简体中文 (zh-CN)
+- 繁体中文 (zh-TW)
+- 日语 (ja)
+- 韩语 (ko)
+- 法语 (fr)
+- 德语 (de)
+- 西班牙语 (es)
+- 意大利语 (it)
+- 葡萄牙语 (pt)
+- 俄语 (ru)
+- 阿拉伯语 (ar)
+- 印地语 (hi)
+
 ## 故障排除
 
-1. **NLTK资源下载失败**：如果程序在"Downloading NLTK punkt tokenizer"消息后挂起，请使用仅下载选项：
+1. **NLTK资源下载失败**：如果程序在"Downloading NLTK punkt tokenizer"消息后挂起，请使用下载选项：
    ```bash
    python main.py --download-nltk
    ```
-   
-   这些选项处理可能导致自动下载挂起的SSL验证问题和适当的超时设置。
+   此选项会处理SSL验证问题和适当的超时设置。
 
-2. **API限制**：Deepseek API可能有使用限制。检查您的账户配额。
+2. **API限制**：Deepseek API可能有使用限制。检查您的账户配额和API密钥是否正确。
 
-3. **内存问题**：处理大型EPUB文件可能需要更多内存。
+3. **内存问题**：处理大型EPUB文件可能需要更多内存。减小批处理大小或降低并行处理的程度。
 
-4. **翻译质量**：翻译质量取决于Deepseek API。对于特定领域内容，考虑使用自定义术语表。
+4. **翻译质量**：翻译质量取决于Deepseek API。对于特定领域内容，建议使用自定义术语表以提高准确性。
+
+5. **连接问题**：如果出现API连接问题，尝试增加timeout值和max_retries值。
+
+## 依赖库
+
+- [ebooklib](https://github.com/aerkalov/ebooklib) - EPUB文件处理
+- [beautifulsoup4](https://www.crummy.com/software/BeautifulSoup/) - HTML解析
+- [requests](https://requests.readthedocs.io/) - HTTP请求（同步模式）
+- [aiohttp](https://docs.aiohttp.org/) - 异步HTTP请求（优化模式）
+- [nltk](https://www.nltk.org/) - 自然语言处理与术语提取
+- [tqdm](https://tqdm.github.io/) - 进度条显示
 
 ## 许可证
 
