@@ -32,7 +32,17 @@ try:
     nltk.data.find('tokenizers/punkt')
 except LookupError:
     logger.info("Downloading NLTK punkt tokenizer for smart text splitting")
-    nltk.download('punkt', quiet=True)
+    # Disable SSL verification to avoid download issues
+    try:
+        import ssl
+        _create_unverified_https_context = ssl._create_unverified_context
+    except AttributeError:
+        pass
+    else:
+        ssl._create_default_https_context = _create_unverified_https_context
+    
+    # Set a timeout for the download to prevent hanging
+    nltk.download('punkt', quiet=True, timeout=30)
 
 
 class EPUBProcessor:

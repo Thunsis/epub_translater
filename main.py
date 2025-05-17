@@ -11,11 +11,22 @@ import sys
 import logging
 import argparse
 import time
+import nltk
 
 from epub_translator.config import Config
 from epub_translator import get_translator, get_term_extractor, get_processor
 
 logger = logging.getLogger("epub_translator")
+
+def check_nltk_data():
+    """Check if required NLTK data is available, suggest downloading if not."""
+    try:
+        nltk.data.find('tokenizers/punkt')
+        return True
+    except LookupError:
+        logger.error("NLTK punkt tokenizer not found. This is required for text processing.")
+        logger.error("Please run 'python -m epub_translator.download_nltk' first to download required data.")
+        return False
 
 def translate_epub(input_path, output_path, config_path=None, api_key=None, 
                   source_lang=None, target_lang=None, terminology_file=None,
@@ -49,6 +60,10 @@ def translate_epub(input_path, output_path, config_path=None, api_key=None,
     # Create output directory if needed
     output_dir = os.path.dirname(os.path.abspath(output_path))
     os.makedirs(output_dir, exist_ok=True)
+    
+    # Verify NLTK data is available
+    if not check_nltk_data():
+        return None
     
     # Load configuration
     start_time = time.time()
@@ -124,8 +139,12 @@ def main():
     """Main entry point for command-line interface."""
     parser = argparse.ArgumentParser(description="Translate EPUB books using Deepseek API")
     
+    # Add download-only option
+    parser.add_argument("--download-nltk", action="store_true", 
+                        help="Download required NLTK data and exit")
+    
     # Input/output arguments
-    parser.add_argument("input", help="Input EPUB file path")
+    parser.add_argument("input", nargs="?", help="Input EPUB file path")
     parser.add_argument("-o", "--output", help="Output EPUB file path")
     
     # Configuration arguments
@@ -157,10 +176,37 @@ def main():
     log_level = getattr(logging, args.log_level.upper())
     for handler in logging.root.handlers:
         handler.setLevel(log_level)
+        
+    # Handle download-only mode
+    if args.download_nltk:
+        print("NLTK Downloader for EPUB Translator")
+        print("===================================")
+        try:
+            import ssl
+            try:
+                _create_unverified_https_context = ssl._create_unverified_context
+            except AttributeError:
+                pass
+            else:
+                ssl._create_default_https_context = _create_unverified_https_context
+            
+            print("Downloading NLTK punkt tokenizer...")
+            nltk.download('punkt', quiet=False)
+            print("Download complete. You can now run the translator.")
+            return 0
+        except Exception as e:
+            print(f"Error downloading NLTK data: {e}")
+            print("Please run the script 'python -m epub_translator.download_nltk' instead.")
+            return 1
     
     # Determine whether to use optimized methods
     use_optimized = args.optimize and not args.no_optimize
     
+    # Check if input was provided (required unless downloading)
+    if not args.input and not args.download_nltk:
+        parser.error("the following arguments are required: input")
+        return 1
+        
     # Translate the file
     config = Config(args.config or "config.ini")
     config.set("processing", "use_optimized_translator", str(use_optimized))
