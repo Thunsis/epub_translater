@@ -36,3 +36,4 @@ _terms.csv
 *.bak
 temp/
 .translation_cache/
+*_workdir/

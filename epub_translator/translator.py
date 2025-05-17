@@ -73,6 +73,7 @@ class DeepseekTranslator:
         self.rate_limit_interval = 60 / rate_limit  # seconds between requests
         self.last_request_time = 0
         self.translation_cache = {}
+        self.api_enabled = False  # Start with API disabled until files are prepared
         
         # Ensure API key is provided
         if not api_key:
@@ -245,25 +246,67 @@ class DeepseekTranslator:
                 f"You are a highly skilled translator from {self.source_lang_name} to {self.target_lang_name} specializing in technical and academic content. "
                 f"Translate each section of text separated by '-----TRANSLATE_SEPARATOR_TIMESTAMP-----' into {self.target_lang_name}. "
                 f"Preserve original formatting, maintain the original meaning, and ensure a natural and fluent translation. "
-                f"Analyze the subject matter domain of the content and identify domain-specific terminology. "
-                f"DO NOT translate any professional terminology, including technical terms, product names, programming languages, "
-                f"scientific concepts, industry standards, and specialized jargon. Keep these in their original form. "
-                f"Use your understanding of various professional domains to identify these terms accurately. "
-                f"Look for terms that have specific meaning within a technical or scientific context. "
-                f"Reply only with the translations, separated by the same separator marker."
+                f"\n\nCRITICAL INSTRUCTION: NEVER translate technical terminology. These terms MUST remain in their original form:"
+                f"\n- Programming languages (Python, Java, JavaScript, TypeScript, C++, etc.)"
+                f"\n- Libraries, frameworks, and tools (React, Angular, Django, TensorFlow, etc.)"
+                f"\n- Technical concepts and design patterns (Observer Pattern, Dependency Injection, etc.)"
+                f"\n- Product/company names and acronyms (GitHub, API, HTTP, REST, etc.)"
+                f"\n- File formats and extensions (JSON, XML, CSV, .js, .py, etc.)"
+                f"\n- Class names, method names, function names, variable names, and code identifiers"
+                f"\n- Database terminology (SQL, ACID, JOIN, index, etc.)"
+                
+                f"\n\nHow to identify technical terms:"
+                f"\n- Terms with capital letters in the middle (camelCase, PascalCase)"
+                f"\n- Terms that use dots/periods (React.Component, numpy.array)"
+                f"\n- Multiple words that form a specific technical concept (Dependency Injection)"
+                f"\n- Words in code blocks or examples"
+                f"\n- Any specialized jargon or domain-specific terminology"
+                
+                f"\n\nImportant guidelines:"
+                f"\n1. NEVER partially translate a technical term - either keep the entire term in English or translate the whole phrase"
+                f"\n2. When in doubt, preserve the original English term"
+                f"\n3. Be consistent: if a term appears multiple times, handle it the same way throughout"
+                f"\n4. Maintain the original capitalization and formatting of technical terms"
+                f"\n5. For {self.target_lang_name == 'chinese' and '中文' or self.target_lang_name}, add spaces before and after English terms"
+                
+                f"\n\nReply only with the translations, separated by the same separator marker."
             )
         else:
             return (
                 f"You are a highly skilled translator from {self.source_lang_name} to {self.target_lang_name} specializing in technical and academic content. "
                 f"Translate the following text into {self.target_lang_name}. "
                 f"Preserve original formatting, maintain the original meaning, and ensure a natural and fluent translation. "
-                f"Analyze the subject matter domain of the content and identify domain-specific terminology. "
-                f"DO NOT translate any professional terminology, including technical terms, product names, programming languages, "
-                f"scientific concepts, industry standards, and specialized jargon. Keep these in their original form. "
-                f"Use your understanding of various professional domains to identify these terms accurately. "
-                f"Look for terms that have specific meaning within a technical or scientific context. "
-                f"Reply only with the translation, no explanations or additional text."
+                f"\n\nCRITICAL INSTRUCTION: NEVER translate technical terminology. These terms MUST remain in their original form:"
+                f"\n- Programming languages (Python, Java, JavaScript, TypeScript, C++, etc.)"
+                f"\n- Libraries, frameworks, and tools (React, Angular, Django, TensorFlow, etc.)"
+                f"\n- Technical concepts and design patterns (Observer Pattern, Dependency Injection, etc.)"
+                f"\n- Product/company names and acronyms (GitHub, API, HTTP, REST, etc.)"
+                f"\n- File formats and extensions (JSON, XML, CSV, .js, .py, etc.)"
+                f"\n- Class names, method names, function names, variable names, and code identifiers"
+                f"\n- Database terminology (SQL, ACID, JOIN, index, etc.)"
+                
+                f"\n\nHow to identify technical terms:"
+                f"\n- Terms with capital letters in the middle (camelCase, PascalCase)"
+                f"\n- Terms that use dots/periods (React.Component, numpy.array)"
+                f"\n- Multiple words that form a specific technical concept (Dependency Injection)"
+                f"\n- Words in code blocks or examples"
+                f"\n- Any specialized jargon or domain-specific terminology"
+                
+                f"\n\nImportant guidelines:"
+                f"\n1. NEVER partially translate a technical term - either keep the entire term in English or translate the whole phrase"
+                f"\n2. When in doubt, preserve the original English term"
+                f"\n3. Be consistent: if a term appears multiple times, handle it the same way throughout"
+                f"\n4. Maintain the original capitalization and formatting of technical terms"
+                f"\n5. For {self.target_lang_name == 'chinese' and '中文' or self.target_lang_name}, add spaces before and after English terms"
+                
+                f"\n\nReply only with the translation, no explanations or additional text."
             )
+    
+    def enable_api(self):
+        """Enable API calls. Should be called only after working directory is fully prepared."""
+        if not self.api_enabled:
+            logger.info("Enabling API calls - working directory preparation is complete")
+            self.api_enabled = True
     
     def _make_api_request(self, messages):
         """Make request to Deepseek API.
@@ -274,6 +317,10 @@ class DeepseekTranslator:
         Returns:
             API response
         """
+        # Check if API is enabled
+        if not self.api_enabled:
+            logger.warning("API call attempted before working directory preparation complete")
+            return {"choices": [{"message": {"content": "API NOT ENABLED YET - Dummy response until working directory is prepared"}}]}
         # Rate limiting
         current_time = time.time()
         time_since_last_request = current_time - self.last_request_time
@@ -651,6 +698,10 @@ class DeepseekTranslator:
         Returns:
             API response
         """
+        # Check if API is enabled
+        if not self.api_enabled:
+            logger.warning("Async API call attempted before working directory preparation complete")
+            return {"choices": [{"message": {"content": "API NOT ENABLED YET - Dummy response until working directory is prepared"}}]}
         await self._ensure_async_session()
         
         # Apply smart rate limiting

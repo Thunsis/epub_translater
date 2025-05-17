@@ -2,420 +2,341 @@
 # -*- coding: utf-8 -*-
 
 """
-Terminology Extractor for EPUB Translator.
-Identifies domain-specific terminology and protects it during translation.
-Simple implementation without external NLP dependencies.
+Simplified Terminology Extractor for EPUB Translator.
+Focuses on extracting technical terminology directly from book structure:
+1. Extracts table of contents (TOC) and index
+2. Uses DeepSeek to analyze and identify technical terms to preserve during translation
 """
 
 import os
 import re
 import csv
+import json
+import time
 import logging
-import string
-import collections
+from typing import Dict, List, Optional, Any
+from bs4 import BeautifulSoup
 
 logger = logging.getLogger("epub_translator.term_extractor")
 
-# Simple stopwords list (most common English words)
-STOPWORDS = {
-    'i', 'me', 'my', 'myself', 'we', 'our', 'ours', 'ourselves', 'you', 'your', 
-    'yours', 'yourself', 'yourselves', 'he', 'him', 'his', 'himself', 'she', 
-    'her', 'hers', 'herself', 'it', 'its', 'itself', 'they', 'them', 'their', 
-    'theirs', 'themselves', 'what', 'which', 'who', 'whom', 'this', 'that', 
-    'these', 'those', 'am', 'is', 'are', 'was', 'were', 'be', 'been', 'being', 
-    'have', 'has', 'had', 'having', 'do', 'does', 'did', 'doing', 'a', 'an', 
-    'the', 'and', 'but', 'if', 'or', 'because', 'as', 'until', 'while', 'of', 
-    'at', 'by', 'for', 'with', 'about', 'against', 'between', 'into', 'through', 
-    'during', 'before', 'after', 'above', 'below', 'to', 'from', 'up', 'down', 
-    'in', 'out', 'on', 'off', 'over', 'under', 'again', 'further', 'then', 
-    'once', 'here', 'there', 'when', 'where', 'why', 'how', 'all', 'any', 
-    'both', 'each', 'few', 'more', 'most', 'other', 'some', 'such', 'no', 
-    'nor', 'not', 'only', 'own', 'same', 'so', 'than', 'too', 'very'
-}
-
-def simple_sentence_tokenize(text):
-    """Simple sentence tokenizer using regex."""
-    # Split on sentence-ending punctuation followed by whitespace or end of string
-    sentences = re.split(r'[.!?](?:\s|\Z)', text)
-    return [s.strip() for s in sentences if s.strip()]
-
-def simple_word_tokenize(text):
-    """Simple word tokenizer using regex."""
-    # Find all words (sequences of letters, numbers, and some punctuation)
-    return re.findall(r'\b[\w\-\']+\b', text)
-
-def generate_ngrams(tokens, n):
-    """Generate n-grams from a list of tokens."""
-    return [' '.join(tokens[i:i+n]) for i in range(len(tokens)-n+1)]
-
 class TerminologyExtractor:
-    """Extracts and manages domain-specific terminology."""
+    """Extract and manage domain-specific terminology using book structure and DeepSeek AI."""
     
-    # Special markers for protecting terms during translation
-    PROTECT_START = "[[TERM:"
-    PROTECT_END = "]]"
-    
-    def __init__(self, min_frequency=3, max_term_length=5, ignore_case=True, custom_terminology_file=None, 
-                 use_deepseek=True, translator=None):
-        """Initialize terminology extractor.
+    def __init__(self, translator=None, workdir=None, use_deepseek=True):
+        """Initialize the terminology extractor.
         
         Args:
-            min_frequency: Minimum frequency for automatic term extraction
-            max_term_length: Maximum number of words in a term
-            ignore_case: Whether to ignore case when matching terms
-            custom_terminology_file: Path to CSV file with custom terminology
-            use_deepseek: Whether to use Deepseek for terminology extraction
-            translator: Translator instance for terminology translation
+            translator: Translator instance for DeepSeek API calls
+            workdir: Working directory for storing terminology files
+            use_deepseek: Whether to use DeepSeek for terminology analysis
         """
-        self.min_frequency = min_frequency
-        self.max_term_length = max_term_length
-        self.ignore_case = ignore_case
-        self.terminology = {}  # {term: frequency}
-        self.custom_terminology = {}  # {term: translation}
-        self.use_deepseek = use_deepseek
         self.translator = translator
+        self.workdir = workdir
+        self.use_deepseek = use_deepseek
         
-        # Load custom terminology if provided
-        if custom_terminology_file:
-            self.load_terminology(custom_terminology_file)
+        # Final terminology list
+        self.final_terminology = {}
+        
+        # Don't create terminology directory in phase 1
+        # Terminology directory will be created on-demand in phase 2 when needed
     
-    def load_terminology(self, terminology_file):
-        """Load custom terminology from a file.
+    def extract_terminology(self, text_content=None):
+        """Extract terminology directly using DeepSeek analysis.
         
         Args:
-            terminology_file: Path to file with terminology (one term per line, or CSV)
-        """
-        if not os.path.exists(terminology_file):
-            logger.warning(f"Terminology file not found: {terminology_file}")
-            return
-        
-        try:
-            terms_loaded = 0
-            with open(terminology_file, 'r', encoding='utf-8') as f:
-                # Try to determine format (CSV or simple list)
-                sample = f.read(1024)
-                f.seek(0)  # Reset file pointer
-                
-                if ',' in sample:  # Likely CSV format
-                    reader = csv.reader(f)
-                    for row in reader:
-                        if row and len(row) >= 1:
-                            term = row[0].strip()
-                            if term and not term.startswith('#'):  # Skip empty lines and comments
-                                # Add term with itself as translation (preserve it)
-                                self.custom_terminology[term] = term
-                                # Add to general terminology with high frequency
-                                self.terminology[term] = 999  # High frequency to ensure it's used
-                                terms_loaded += 1
-                else:  # Simple list format (one term per line)
-                    for line in f:
-                        term = line.strip()
-                        if term and not term.startswith('#'):  # Skip empty lines and comments
-                            # Add term with itself as translation (preserve it)
-                            self.custom_terminology[term] = term
-                            # Add to general terminology with high frequency
-                            self.terminology[term] = 999
-                            terms_loaded += 1
+            text_content: Not used, just kept for API compatibility
             
-            logger.info(f"Loaded {terms_loaded} terms from {terminology_file}")
-        except Exception as e:
-            logger.error(f"Error loading terminology file: {e}")
+        Returns:
+            Dictionary with extracted terminology
+        """
+        return self.enhance_terminology_with_deepseek()
     
-    def extract_terminology(self, text, is_toc=False):
-        """Extract domain-specific terminology from text.
-        
-        Args:
-            text: Text to extract terminology from
-            is_toc: Whether the text is from a table of contents
+    def enhance_terminology_with_deepseek(self):
+        """Use DeepSeek to analyze book structure and identify terminology.
         
         Returns:
-            Dictionary of extracted terms and their frequencies
+            Dictionary of final terminology
         """
-        # Check if we should use DeepSeek for smart extraction
-        if self.use_deepseek and self.translator:
-            if is_toc:
-                logger.info("Using DeepSeek to extract domain terminology from TOC...")
-                return self.extract_terminology_with_deepseek(text, is_toc=True)
-            elif len(text) < 100000:  # For manageable text size
-                logger.info("Using DeepSeek to extract domain terminology...")
-                return self.extract_terminology_with_deepseek(text)
-        
-        # Fall back to frequency-based extraction for very large texts
-        # or when DeepSeek is not available
-        logger.info("Extracting terminology using frequency analysis...")
-        
-        # Preprocess text
-        if self.ignore_case:
-            text = text.lower()
-        
-        # Tokenize text into sentences
-        sentences = simple_sentence_tokenize(text)
-        
-        # Extract candidate terms
-        term_candidates = collections.defaultdict(int)
-        
-        for sentence in sentences:
-            # Tokenize sentence
-            tokens = simple_word_tokenize(sentence)
+        if not self.translator or not self.use_deepseek:
+            logger.warning("DeepSeek terminology extraction skipped (not enabled or no translator available)")
+            return {}
             
-            # Filter tokens
-            tokens = [t for t in tokens if self._is_valid_token(t)]
+        # Check for existing terminology to avoid duplicate work
+        if self.workdir:
+            # Check if final terminology file exists (without relying on completion marker)
+            final_terminology_file = os.path.join(self.workdir, "terminology", "final_terminology.json")
             
-            # Extract n-grams (1 to max_term_length)
-            for n in range(1, min(self.max_term_length + 1, len(tokens) + 1)):
-                for term in generate_ngrams(tokens, n):
-                    term_candidates[term] += 1
+            if os.path.exists(final_terminology_file):
+                try:
+                    with open(final_terminology_file, 'r', encoding='utf-8') as f:
+                        self.final_terminology = json.load(f)
+                    logger.info(f"Loaded existing terminology from {final_terminology_file}")
+                    return self.final_terminology
+                except Exception as e:
+                    logger.warning(f"Could not load existing terminology: {e}")
         
-        # Filter terms by frequency
-        extracted_terms = {
-            term: freq for term, freq in term_candidates.items()
-            if freq >= self.min_frequency
-        }
+        logger.info("Starting DeepSeek terminology extraction from book structure")
         
-        # Add to terminology dictionary
-        self.terminology.update(extracted_terms)
-        
-        logger.info(f"Extracted {len(extracted_terms)} terms through frequency analysis")
-        
-        # Process the terms (preserve them in their original form)
-        if extracted_terms:
-            self.process_terminology(extracted_terms.keys())
-        
-        return extracted_terms
-    
-    def extract_terminology_with_deepseek(self, text, is_toc=False):
-        """Extract domain-specific terminology using DeepSeek's understanding.
-        
-        Args:
-            text: Text to extract terminology from
-            is_toc: Whether the text is from table of contents
-        
-        Returns:
-            Dictionary of extracted terms and their frequencies
-        """
-        if not self.translator:
-            logger.warning("No translator available for DeepSeek terminology extraction")
+        # Check if API is enabled in the translator
+        if hasattr(self.translator, 'api_enabled') and not self.translator.api_enabled:
+            logger.warning("Skipping DeepSeek terminology extraction - API not enabled yet")
             return {}
         
-        # Create a system message for terminology extraction from TOC/content
-        if is_toc:
-            system_message = (
-                "You are an expert terminology extractor that specializes in identifying domain-specific"
-                " technical terms from book tables of contents and chapter titles. "
-                "Analyze the provided table of contents and extract all domain-specific technical terminology. "
-                "Focus on identifying:"
-                "\n1. Professional/technical terms specific to the book's domain"
-                "\n2. Specialized jargon and technical nomenclature"
-                "\n3. Important proper nouns that should not be translated"
-                "\n4. Technology names, frameworks, standards, and protocols"
-                "\n5. Scientific concepts and methodologies mentioned in chapter titles"
-                "\nReturn ONLY a list of the extracted terms (one term per line). Do not include explanations, "
-                "definitions, or any other text beyond the extracted terms."
-            )
-        else:
-            system_message = (
-                "You are an expert terminology extractor that specializes in identifying domain-specific"
-                " technical terms from technical content. "
-                "Analyze the provided text and extract all domain-specific technical terminology. "
-                "Focus on identifying:"
-                "\n1. Professional/technical terms"
-                "\n2. Specialized jargon and nomenclature"
-                "\n3. Important proper nouns"
-                "\n4. Technology names, frameworks, standards, and protocols"
-                "\n5. Scientific concepts and methodologies"
-                "\nReturn ONLY a list of the extracted terms (one term per line). Do not include explanations, "
-                "definitions, or any other text beyond the extracted terms."
-            )
+        # Prepare data with TOC and index only
+        book_context = self._extract_book_structure()
         
-        # Truncate text if it's too long
-        max_length = 10000 if is_toc else 20000
-        if len(text) > max_length:
-            logger.info(f"Truncating text to {max_length} characters for terminology extraction")
-            # For TOC, take the beginning which contains the most important terms
-            if is_toc:
-                sample_text = text[:max_length]
-            else:
-                # For full text, take samples from beginning, middle and end
-                third = max_length // 3
-                sample_text = text[:third] + "\n\n" + text[len(text)//2-third//2:len(text)//2+third//2] + "\n\n" + text[-third:]
-        else:
-            sample_text = text
+        # Create system message for DeepSeek
+        system_message = self._get_terminology_system_message()
         
-        # Extract terminology using Deepseek
         try:
-            logger.info("Sending terminology extraction request to DeepSeek...")
-            response = self._translate_batch_with_deepseek(sample_text, system_message)
-            
-            # Process the response - expect one term per line
-            terms = [line.strip() for line in response.split('\n') if line.strip()]
-            
-            # Filter out very short terms and non-terminology
-            terms = [term for term in terms if len(term) >= 3 and not term.lower() in STOPWORDS]
-            
-            # Add terms to terminology dictionary with high frequency to ensure they're used
-            extracted_terms = {term: 100 for term in terms}
-            
-            # Update the global terminology dictionary
-            self.terminology.update(extracted_terms)
-            
-            logger.info(f"DeepSeek identified {len(extracted_terms)} terminology items")
-            
-            # Process the terms (preserve them in their original form)
-            if extracted_terms:
-                self.process_terminology(extracted_terms.keys())
-            
-            return extracted_terms
-            
-        except Exception as e:
-            logger.error(f"Error using DeepSeek for terminology extraction: {e}")
-            logger.info("Falling back to frequency-based extraction")
-            return self.extract_terminology(text, is_toc=False)
-    
-    def process_terminology(self, terms):
-        """Process terminology - preserve terms without translation.
-        
-        Args:
-            terms: List or set of terms to process
-        
-        Returns:
-            Dictionary of preserved terms {term: term}
-        """
-        if not terms:
-            return {}
-        
-        logger.info(f"Processing {len(terms)} terminology items (preserving original)")
-        
-        # Process all terms
-        for term in terms:
-            # Add the term with itself as the "translation" (preserving it)
-            self.custom_terminology[term] = term
-            
-        logger.info(f"Preserved {len(self.custom_terminology)} terms in their original form")
-        return self.custom_terminology
-    
-    def _translate_batch_with_deepseek(self, text, system_message):
-        """Send batch of text to Deepseek for translation with custom system message.
-        
-        Args:
-            text: Text to translate
-            system_message: Custom system message for Deepseek
-            
-        Returns:
-            Translated text
-        """
-        try:
-            # Try to use translator's custom method for system message translation if available
+            # Send to DeepSeek for analysis
+            logger.info("Sending book structure to DeepSeek for terminology analysis")
             if hasattr(self.translator, 'translate_with_system_message'):
-                return self.translator.translate_with_system_message(text, system_message)
-            
-            # Fallback to regular translation
-            return self.translator.translate_text(text)
-        except Exception as e:
-            logger.error(f"Error translating terminology: {e}")
-            return ""
-    
-    def _is_valid_token(self, token):
-        """Check if a token is valid for terminology extraction.
-        
-        Args:
-            token: Token to check
-        
-        Returns:
-            True if token is valid, False otherwise
-        """
-        # Filter out very short tokens
-        if len(token) < 3:
-            return False
-        
-        # Filter out tokens that are just punctuation
-        if all(c in string.punctuation for c in token):
-            return False
-        
-        # Filter out tokens that are mainly digits
-        if sum(c.isdigit() for c in token) / len(token) > 0.5:
-            return False
-        
-        # Filter out stopwords
-        if token.lower() in STOPWORDS:
-            return False
-        
-        return True
-    
-    def protect_terminology(self, text):
-        """Protect terminology in text from translation.
-        
-        Args:
-            text: Text to protect terminology in
-        
-        Returns:
-            Text with protected terminology
-        """
-        if not self.terminology and not self.custom_terminology:
-            return text
-        
-        # Sort terms by length (descending) to handle longer terms first
-        # This prevents issues with overlapping terms
-        all_terms = list(set(list(self.terminology.keys()) + list(self.custom_terminology.keys())))
-        all_terms.sort(key=len, reverse=True)
-        
-        protected_text = text
-        
-        for term in all_terms:
-            # Skip very short terms
-            if len(term) < 3:
-                continue
-            
-            # Create pattern based on case sensitivity setting
-            if self.ignore_case:
-                pattern = re.compile(r'\b' + re.escape(term) + r'\b', re.IGNORECASE)
+                response = self.translator.translate_with_system_message(book_context, system_message)
             else:
-                pattern = re.compile(r'\b' + re.escape(term) + r'\b')
+                logger.warning("Translator doesn't support system messages, using standard translation")
+                response = self.translator.translate_text(book_context)
             
-            # Replace term with protected version
-            protected_term = f"{self.PROTECT_START}{term}{self.PROTECT_END}"
-            protected_text = pattern.sub(protected_term, protected_text)
-        
-        return protected_text
+            # Process the response
+            final_terminology = self._process_deepseek_response(response)
+            
+            # Save results
+            if self.workdir:
+                self._save_final_terminology(final_terminology)
+                
+                # Skip creating the completion marker file
+                # (This is required by the user)
+            
+            self.final_terminology = final_terminology
+            logger.info(f"DeepSeek terminology analysis complete - identified {len(final_terminology)} terms")
+            return final_terminology
+            
+        except Exception as e:
+            logger.error(f"Error during DeepSeek terminology analysis: {e}")
+            return {}
     
-    def restore_terminology(self, text):
-        """Restore protected terminology in translated text.
-        
-        Args:
-            text: Text with protected terminology
+    def _extract_book_structure(self):
+        """Extract book structure (TOC and index) to provide context to DeepSeek.
         
         Returns:
-            Text with restored terminology
+            String containing the book structure data
         """
-        # Pattern to find protected terms
-        pattern = re.compile(f"{re.escape(self.PROTECT_START)}(.*?){re.escape(self.PROTECT_END)}")
+        result = "I'm analyzing a technical e-book and need to identify terminology that should be preserved (not translated) during translation. Please help me analyze the book structure below.\n\n"
         
-        # Replace protected terms with original or custom translation
-        def replace_term(match):
-            term = match.group(1)
-            # If there's a custom translation, use it
-            if term in self.custom_terminology:
-                return self.custom_terminology[term]
-            # Otherwise keep the original term
-            return term
+        # Extract and include table of contents
+        toc_content = self._extract_toc_content()
+        if toc_content:
+            result += "=== TABLE OF CONTENTS ===\n\n" + toc_content + "\n\n"
+        else:
+            result += "=== TABLE OF CONTENTS ===\n\nNot available\n\n"
         
-        restored_text = pattern.sub(replace_term, text)
-        return restored_text
+        # Extract and include index
+        index_content = self._extract_index_content()
+        if index_content:
+            result += "=== BOOK INDEX ===\n\n" + index_content + "\n\n"
+        else:
+            result += "=== BOOK INDEX ===\n\nNot available\n\n"
+        
+        # Add request for analysis
+        result += "Based on this book structure, please identify technical terms, proper names, programming concepts, and other domain-specific terminology that should NOT be translated. Consider terms from the table of contents and index, but also infer other related terms that might appear in the book."
+        
+        return result
     
-    def save_terminology(self, output_file):
-        """Save extracted terminology to a CSV file.
+    def _extract_toc_content(self):
+        """Extract table of contents from the working directory.
+        
+        Returns:
+            String containing the TOC or empty string if not found
+        """
+        if not self.workdir:
+            return ""
+            
+        # Look for TOC in common locations
+        possible_paths = [
+            os.path.join(self.workdir, "html_items", "toc", "original.txt"),
+            os.path.join(self.workdir, "html_items", "contents", "original.txt")
+        ]
+        
+        for path in possible_paths:
+            if os.path.exists(path):
+                try:
+                    with open(path, 'r', encoding='utf-8') as f:
+                        content = f.read()
+                    logger.info(f"Extracted TOC from {path}")
+                    return content
+                except Exception as e:
+                    logger.error(f"Error reading TOC file {path}: {e}")
+        
+        logger.warning("TOC content not found in working directory")
+        return ""
+    
+    def _extract_index_content(self):
+        """Extract index content from the working directory.
+        
+        Returns:
+            String containing the index or empty string if not found
+        """
+        if not self.workdir:
+            return ""
+            
+        # Look for index in common locations
+        possible_paths = [
+            os.path.join(self.workdir, "html_items", "index", "original.txt"),
+            os.path.join(self.workdir, "html_items", "index", "original.html")
+        ]
+        
+        for path in possible_paths:
+            if os.path.exists(path):
+                try:
+                    with open(path, 'r', encoding='utf-8') as f:
+                        content = f.read()
+                    
+                    # Process HTML if needed
+                    if path.endswith('.html'):
+                        try:
+                            soup = BeautifulSoup(content, 'html.parser')
+                            content = soup.get_text()
+                        except Exception:
+                            # Simple HTML stripping as fallback
+                            content = re.sub(r'<[^>]+>', ' ', content)
+                    
+                    # Limit size if needed
+                    if len(content) > 8000:
+                        content = content[:8000] + "...[content truncated]"
+                        
+                    logger.info(f"Extracted index from {path}")
+                    return content
+                except Exception as e:
+                    logger.error(f"Error reading index file {path}: {e}")
+        
+        logger.warning("Index content not found in working directory")
+        return ""
+    
+    def _get_terminology_system_message(self):
+        """Get the system message for DeepSeek terminology analysis.
+        
+        Returns:
+            String containing the system message
+        """
+        return (
+            "You are an expert terminology analyst specializing in technical and professional content. "
+            "I will provide you with a book's table of contents and index (if available). "
+            "Your task is to analyze this structure and identify domain-specific terminology "
+            "that should be preserved (not translated) during translation."
+            "\n\nYou should:"
+            "\n1. Analyze the book structure to understand the domain and subject matter"
+            "\n2. Identify technical terms, specialized vocabulary, and proper nouns"
+            "\n3. Include both terms explicitly mentioned and those likely to appear based on context"
+            "\n4. Consider programming languages, frameworks, tools, design patterns, and technical concepts"
+            "\n\nProvide your response as a JSON object with the following structure:"
+            "\n{"
+            "\n  \"domain_analysis\": \"Your analysis of the book's domain and subject matter\","
+            "\n  \"terms\": ["
+            "\n    {\"term\": \"term1\", \"preserve\": true, \"reason\": \"Why this should be preserved\"},"
+            "\n    {\"term\": \"term2\", \"preserve\": true, \"reason\": \"Why this should be preserved\"},"
+            "\n    ..."
+            "\n  ]"
+            "\n}"
+            "\n\nBe comprehensive in your analysis, as missed terms might be incorrectly translated."
+        )
+    
+    def _process_deepseek_response(self, response):
+        """Process DeepSeek's response to extract final terminology.
         
         Args:
-            output_file: Path to output CSV file
-        """
-        try:
-            with open(output_file, 'w', encoding='utf-8', newline='') as f:
-                writer = csv.writer(f)
-                writer.writerow(['Term', 'Frequency', 'Custom Translation'])
-                
-                for term, freq in sorted(self.terminology.items(), key=lambda x: x[1], reverse=True):
-                    custom_trans = self.custom_terminology.get(term, '')
-                    writer.writerow([term, freq, custom_trans])
+            response: Response from DeepSeek
             
-            logger.info(f"Saved {len(self.terminology)} terms to {output_file}")
+        Returns:
+            Dictionary of final terminology
+        """
+        final_terminology = {}
+        
+        try:
+            # Try to extract JSON from the response
+            json_match = re.search(r'({.*})', response, re.DOTALL)
+            if json_match:
+                json_str = json_match.group(1)
+                result = json.loads(json_str)
+            else:
+                result = json.loads(response)
+            
+            # Process the terms from the result
+            if "terms" in result:
+                for term_data in result["terms"]:
+                    term = term_data.get("term", "").strip()
+                    if not term or len(term) < 2:
+                        continue
+                    
+                    preserve = term_data.get("preserve", False)
+                    reason = term_data.get("reason", "")
+                    
+                    # Add to final terminology
+                    final_terminology[term] = {
+                        "preserve": preserve,
+                        "reason": reason
+                    }
+                    
+                # Include domain analysis if available
+                if "domain_analysis" in result and result["domain_analysis"]:
+                    logger.info(f"Domain analysis: {result['domain_analysis']}")
+                    
+        except json.JSONDecodeError:
+            logger.error("Failed to parse DeepSeek response as JSON")
+            # Fall back to regex-based extraction
+            terms = re.findall(r'term[:\s]+"([^"]+)"', response)
+            for term in terms:
+                term = term.strip()
+                if term and len(term) >= 2:
+                    # Add the term to final terminology, assuming it should be preserved
+                    final_terminology[term] = {
+                        "preserve": True,
+                        "reason": "Extracted from DeepSeek response"
+                    }
         except Exception as e:
-            logger.error(f"Error saving terminology to {output_file}: {e}")
+            logger.error(f"Error processing DeepSeek response: {e}")
+            return {}
+        
+        return final_terminology
+    
+    def _save_final_terminology(self, final_terminology):
+        """Save final terminology to CSV and JSON files.
+        
+        Args:
+            final_terminology: Dictionary of final terminology
+        """
+        if not self.workdir:
+            return
+            
+        try:
+            term_dir = os.path.join(self.workdir, "terminology")
+            os.makedirs(term_dir, exist_ok=True)
+            
+            # Save as CSV
+            final_file = os.path.join(term_dir, "final_terminology.csv")
+            with open(final_file, 'w', encoding='utf-8', newline='') as f:
+                writer = csv.writer(f)
+                writer.writerow(['Term', 'Preserve', 'Reason'])
+                
+                for term, info in sorted(final_terminology.items()):
+                    if info.get('preserve', True):  # Default to preserve
+                        writer.writerow([
+                            term,
+                            True,
+                            info.get('reason', '')
+                        ])
+            
+            # Save as JSON
+            with open(os.path.join(term_dir, "final_terminology.json"), 'w', encoding='utf-8') as f:
+                json.dump(final_terminology, f, ensure_ascii=False, indent=2)
+            
+            # Save a simple terms list (one per line)
+            terms_file = os.path.join(term_dir, "terms.txt")
+            with open(terms_file, 'w', encoding='utf-8') as f:
+                for term, info in sorted(final_terminology.items()):
+                    if info.get('preserve', True):
+                        f.write(f"{term}\n")
+                
+            logger.info(f"Saved {len(final_terminology)} terms to {final_file}")
+            
+        except Exception as e:
+            logger.error(f"Error saving final terminology: {e}")
