@@ -51,7 +51,8 @@ class DeepseekTranslator:
     }
     
     def __init__(self, api_key, source_lang="en", target_lang="zh-CN", 
-                 model="deepseek-chat", max_retries=3, timeout=30, rate_limit=10):
+                 model="deepseek-chat", max_retries=3, timeout=30, rate_limit=10,
+                 verify_ssl=True):
         """Initialize the Deepseek translator.
         
         Args:
@@ -62,6 +63,7 @@ class DeepseekTranslator:
             max_retries: Maximum number of retries for API calls
             timeout: Timeout for API calls in seconds
             rate_limit: Maximum requests per minute
+            verify_ssl: Whether to verify SSL certificate (default: True)
         """
         self.api_key = api_key
         self.source_lang = source_lang
@@ -74,6 +76,7 @@ class DeepseekTranslator:
         self.last_request_time = 0
         self.translation_cache = {}
         self.api_enabled = False  # Start with API disabled until files are prepared
+        self.verify_ssl = verify_ssl
         
         # Ensure API key is provided
         if not api_key:
@@ -349,7 +352,8 @@ class DeepseekTranslator:
                     self.DEFAULT_ENDPOINT,
                     headers=headers,
                     data=json.dumps(data),
-                    timeout=self.timeout
+                    timeout=self.timeout,
+                    verify=self.verify_ssl
                 )
                 response.raise_for_status()
                 self.last_request_time = time.time()
@@ -438,7 +442,7 @@ class DeepseekTranslator:
                 },
                 connector=aiohttp.TCPConnector(
                     limit=10,  # Limit concurrent connections
-                    verify_ssl=True,
+                    verify_ssl=self.verify_ssl,  # Use the same SSL verification setting
                     keepalive_timeout=60,
                     ssl=None
                 )

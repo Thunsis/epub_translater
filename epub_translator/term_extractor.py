@@ -79,8 +79,13 @@ class TerminologyExtractor:
         
         # Check if API is enabled in the translator
         if hasattr(self.translator, 'api_enabled') and not self.translator.api_enabled:
-            logger.warning("Skipping DeepSeek terminology extraction - API not enabled yet")
-            return {}
+            # If we're running Phase 2 directly, enable the API now
+            logger.warning("DeepSeek API not enabled yet - enabling it now for terminology extraction")
+            try:
+                self.translator.enable_api()
+            except Exception as e:
+                logger.error(f"Failed to enable DeepSeek API: {e}")
+                return {}
         
         # Prepare data with TOC and index only
         book_context = self._extract_book_structure()
