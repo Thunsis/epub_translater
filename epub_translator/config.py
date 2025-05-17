@@ -33,10 +33,7 @@ class Config:
             'translate_metadata': 'True'
         },
         'terminology': {
-            'enable_auto_extraction': 'True',
-            'min_term_frequency': '3',
-            'max_term_length': '5',  # words
-            'ignore_case': 'True'
+            'use_deepseek': 'True'
         },
         'processing': {
             'batch_size': '10',  # paragraphs per API request

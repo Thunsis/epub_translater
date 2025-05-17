@@ -49,9 +49,9 @@ class TerminologyExtractor:
         Returns:
             Dictionary with extracted terminology
         """
-        return self.enhance_terminology_with_deepseek()
+        return self.generate_terminology_with_deepseek()
     
-    def enhance_terminology_with_deepseek(self):
+    def generate_terminology_with_deepseek(self):
         """Use DeepSeek to analyze book structure and identify terminology.
         
         Returns:
