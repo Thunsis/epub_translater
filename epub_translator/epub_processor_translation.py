@@ -173,7 +173,8 @@ def translate_prepared_content(self, input_path, output_path, force_restart=Fals
         
         # Process batches with ThreadPoolExecutor
         with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
-            futures = []
+            futures = {}
+            batch_info_map = {}
             
             # Submit all non-completed batches for translation
             for batch_info in batch_files:
@@ -196,15 +197,17 @@ def translate_prepared_content(self, input_path, output_path, force_restart=Fals
                     batch_id=batch_id,
                     batch_key=batch_key
                 )
-                futures.append((future, batch_info))
+                futures[future] = batch_info
+                batch_info_map[future] = batch_info
             
             # Process results as they complete
             completed_count = 0
-            for future, batch_info in tqdm(
-                [(f, b) for f, b in zip(as_completed(futures), [b for _, b in futures])],
+            for future in tqdm(
+                as_completed(futures),
                 total=len(futures),
                 desc="Translating batches"
             ):
+                batch_info = batch_info_map[future]
                 item_id = batch_info["item_id"]
                 batch_id = batch_info["batch_id"]
                 

@@ -64,8 +64,20 @@ def extract_and_prepare_content(self, input_path, output_path=None, force_restar
             checkpoint_exists, valid = self.checkpoint_manager.check_existing_checkpoint()
             if checkpoint_exists and valid:
                 logger.info("Found valid checkpoint, resuming preparation")
+                
+                # Load statistics from checkpoint
+                try:
+                    translation_phase = self.checkpoint_manager.state["phases"]["translation"]
+                    self.total_segments = translation_phase.get("total_segments", 0)
+                    self.total_chars = translation_phase.get("total_chars", 0)
+                    self.translated_segments = translation_phase.get("translated_segments", 0)
+                    self.translated_chars = translation_phase.get("translated_chars", 0)
+                    logger.info(f"Loaded statistics from checkpoint: {self.total_segments} segments, {self.total_chars} characters")
+                except Exception as e:
+                    logger.error(f"Error loading statistics from checkpoint: {e}")
+                
                 self.progress_tracker._print_progress(
-                    f"Resuming content preparation from checkpoint", 
+                    f"Resuming content preparation from checkpoint",
                     newline=True
                 )
             elif checkpoint_exists and not valid:
@@ -195,6 +207,10 @@ def extract_and_prepare_content(self, input_path, output_path=None, force_restar
                 from epub_translator.epub_processor_utils import _extract_translatable_segments
                 translatable_segments = _extract_translatable_segments(self, soup, item_id=item_id)
                 total_segments += len(translatable_segments)
+                
+                # Calculate total characters in these segments
+                segment_chars = sum(len(segment[2]) for segment in translatable_segments)
+                self.total_chars += segment_chars
                 
                 # 使用段落优化的批处理方式
                 # 首先优化分段以尊重段落边界

@@ -307,18 +307,8 @@ def main():
                     print(f"DeepSeek identified {len(preserved_terms)} terms to preserve during translation")
                     print(f"Total terms analyzed: {len(final_terminology)}")
                     
-                    # Save terminology to data/terminology directory for reference
-                    terminology_dir = os.path.join('data', 'terminology')
-                    os.makedirs(terminology_dir, exist_ok=True)
-                    
-                    # Create terminology filename based on input file
-                    input_basename = os.path.splitext(os.path.basename(args.input_file))[0]
-                    term_output = os.path.join(terminology_dir, f"{input_basename}_terms.csv")
-                    with open(term_output, 'w', encoding='utf-8') as f:
-                        f.write("Term,Preserve,Reason\n")
-                        for term, info in sorted(final_terminology.items()):
-                            if info.get('preserve', True):
-                                f.write(f"{term},{info.get('preserve', True)},{info.get('reason', '')}\n")
+                    # Reference to terminology file in workdir
+                    term_output = os.path.join(term_extractor.workdir, "terminology", "final_terminology.csv")
                     print(f"Terminology saved to {term_output}")
                     terminology_generated = True
                 else:
@@ -446,4 +436,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
